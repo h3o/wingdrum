@@ -1,0 +1,381 @@
+[global_settings]
+
+TUNING_DEFAULT 				440.0
+
+TUNING_MIN					391.9954359818
+TUNING_MAX					493.8833012561
+
+//MICRO_TUNING_STEP		1.0028922878693670715023923823933	//5 cents, 240th root of 2
+MICRO_TUNING_STEP		1.0057929410678534309188527497122	//10 cents, 120th root of 2
+//MICRO_TUNING_STEP		1.0116194403019224846862305670455	//20 cents, 60th root of 2
+//MICRO_TUNING_STEP		1.0145453349375236414538678576629	//25 cents, 48th root of 2
+
+AUTO_POWER_OFF_TIMEOUT_ALL			600		//in 500ms intervals => 5 minutes
+AUTO_POWER_OFF_TIMEOUT_REVERB		14400	//in 500ms intervals => 120 minutes
+//AUTO_POWER_OFF_ONLY_IF_NO_MOTION	0		//1=enabled, 0=disabled			
+
+AGC_ENABLED							1		//1=enabled, 0=disabled
+AGC_TARGET_LEVEL					-5		//in dB
+AGC_MAX_GAIN						32		//in dB, default value
+AGC_MAX_GAIN_STEP					6		//in dB, increment/decrement
+AGC_MAX_GAIN_LIMIT					50		//in dB, max value (59dB limit)
+MIC_BIAS							1		//0=AVDD, 1=2.5V, 2=2V
+
+//CODEC_ANALOG_VOLUME_DEFAULT			12 //0.5dB steps, -6dB
+//CODEC_ANALOG_VOLUME_DEFAULT			6 //0.5dB steps, -3dB
+CODEC_ANALOG_VOLUME_DEFAULT			0 //0dB, maximum
+
+//CODEC_DIGITAL_VOLUME_DEFAULT			12 //0.5dB steps, -6dB
+CODEC_DIGITAL_VOLUME_DEFAULT		24 //0.5dB steps, -12dB
+
+ACCELEROMETER_CALIBRATE_ON_POWERUP	0
+SAMPLE_FORMAT_HEADER_LENGTH			0 //header to skip: 0 for headerless bin files, 44 for wav files
+
+SCALE_PLAY_SPEED_MICROTUNING	150
+SCALE_PLAY_SPEED_TRANSPOSE 		300
+SCALE_PLAY_SPEED_INITIAL		100
+
+TOUCHPAD_LED_THRESHOLD_A_MUL	7 //4
+TOUCHPAD_LED_THRESHOLD_A_DIV	8 //5
+//TOUCH_PAD_DEFAULT_MAX	450 //TOUCH_HVOLT_2V7, TOUCH_LVOLT_0V5, TOUCH_HVOLT_ATTEN_1V @ 4/5
+//TOUCH_PAD_DEFAULT_MAX	500 //TOUCH_HVOLT_2V7, TOUCH_LVOLT_0V5, TOUCH_HVOLT_ATTEN_1V @ 7/8
+TOUCH_PAD_DEFAULT_MAX	440
+
+SPLIT_TIMBRE_NOTE_THRESHOLD1_COEFF	0.40f
+SPLIT_TIMBRE_NOTE_THRESHOLD2_COEFF	0.65f
+
+[default_order]
+
+//format is: 
+//type: sample, scale
+
+//the type parameter determines under which button (tree/robot) the sample can be found
+
+wood:7,a3-minor						//b1_wood
+wood:8,a3-minor-sharp				//b2_wood
+wood:1,a2-minor						//0131a,0131b
+wood:2,a2-minor-sharp				//0131c
+wood:9,a1-minor,a2-minor,a1-minor-sharp,a2-minor-sharp		//djembe
+
+metal:13,d4-celtic-minor,c4-minor,f4-lydian					//steel_01.wav
+metal:14,c#4-annaziska,d#4-lydian,f4-minor					//steel_02_fix.wav
+metal:3,d4-kurd-minor,c#4-lydian,f3-major,g3-lydian		//0140 turtle
+metal:10,g4-akebono-g#										//glass1
+metal:6,g4-akebono-pentatonic								//A3[2].wav
+metal:11,c5-pygmy											//Hang_1_D4
+
+metal:4,c4-major,f3-major,e3-phrygian-alt								//0143_yishama
+metal:15,b2-minor-harmonic,f#2-major-flat,b1-minor-harmonic				//JHP_C.wav & JHP_C2.wav
+metal:5,a5-minor-sharp,e5-phrygian,f5-major-linear,a4-major-flat		//1202_093351 glockenspiel
+metal:16,a3-ionian,c3-major-pentatonic									//thaigong.ff.wav
+metal:12,a2-minor-sharp,e3-major-flat,f3-major-linear,a3-minor-sharp	//nataraj_01.wav
+
+reverb:0,a4-minor-sharp,e4-major-flat,f4-major-linear,a3-minor-sharp,a2-minor-sharp
+
+[scales]
+
+//format is:
+//scale name: notes (as note and octave or MIDI note number)
+//use # for sharp, flat notes are not supported in the syntax, replace them with a respective sharp note
+//the order is center pad followed by 8 wing pads clockwise starting from the top right one
+
+d4-kurd-minor:			d3,g4,e4,c4,a3,a#3,d4,f4,a4
+d4-celtic-minor:		d3,a4,f4,d4,a3,c4,e4,g4,c5
+g4-akebono-pentatonic:	g3,d5,d#4,g4,c4,c5,d4,d#5,f4	//c,d,d#,f,g
+g4-akebono-g#:			g3,d5,d#4,g#4,c4,c5,d4,d#5,g4	//c,d,d#,g,g#
+c#4-annaziska:			c#3,f#4,d#4,b3,g#3,a3,c#4,e4,g#4
+c5-pygmy:				c4,d#5,g4,c5,d4,d5,d#4,g5,a#4
+
+c4-major:				c3,c5,g4,e4,c4,g3,b3,d4,f4
+//shifted by one note counter-clockwise
+//c4-major:			c3,g4,e4,c4,g3,b3,d4,f4,c5
+
+f3-major:				f2,f4,c4,a3,f3,c3,e3,g3,a#3
+//f#3-egyptian:			f#2,f#4,g#3,b4,c#4,g#4,b3,e3,f#3
+a3-ionian:				a3,b4,e4,g4,c4,a4,d4,c5,f4
+c3-major-pentatonic:	a3,d5,e4,a4,c4,c5,d4,e5,g4
+
+g3-lydian:			g2,c#4,a3,f#3,d3,e3,g3,b3,d4
+g4-lydian:			g3,c#5,a4,f#4,d4,e4,g4,b4,d5
+f3-lydian:			f2,b3,g3,e3,c3,d3,f3,a3,c4
+f4-lydian:			f3,b4,g4,e4,c4,d4,f4,a4,c5
+e4-lydian:			e3,a#4,f#4,d#4,b3,c#4,e4,g#4,b4
+d#4-lydian:			d#3,a4,f4,d4,a#3,c4,d#4,g4,a#4
+d4-lydian:			d3,g#4,e4,c#4,a3,b3,d4,f#4,a4
+c#4-lydian:			c#3,g4,d#4,c4,g#3,a#3,c#4,f4,g#4
+c4-lydian:			c3,f#4,d4,b3,g3,a3,c4,e4,g4
+
+f4-minor:			f3,a#4,g4,d#4,c4,c#4,f4,g#4,c5
+e4-minor:			e3,a4,f#4,d4,b3,c4,e4,g4,b4
+d4-minor:			d3,g4,e4,c4,a3,a#3,d4,f4,a4
+c4-minor:			c3,f4,d4,a#3,g3,g#3,c4,d#4,g4
+
+
+//linear clockwise order:
+f#1-major:				f#0,f#1,g#1,a#1,b1,c#2,d#2,f2,f#2
+f#2-major:				f#1,f#2,g#2,a#2,b2,c#3,d#3,f3,f#3
+f#1-major-flat:			f#0,f#1,g#1,a#1,b1,c#2,d2,e2,f#2
+f#2-major-flat:			f#1,f#2,g#2,a#2,b2,c#3,d3,e3,f#3
+
+b1-minor-harmonic:		b0,b1,c#2,d2,e2,f#2,g2,a#2,b2		
+b2-minor-harmonic:		b1,b2,c#3,d3,e3,f#3,g3,a#3,b3		
+b3-minor-harmonic:		b2,b3,c#4,d4,e4,f#4,g4,a#4,b4		
+b4-minor-harmonic:		b3,b4,c#5,d5,e5,f#5,g5,a#5,b5
+
+//alternative order:
+//b1-minor-harmonic:		b0,d2,f#1,a#1,c#1,b1,d1,f#2,g1		
+//b2-minor-harmonic:		b1,d3,f#2,a#2,c#2,b2,d2,f#3,g2		
+//b3-minor-harmonic:		b2,d4,f#3,a#3,c#3,b3,d3,f#4,g3		
+//b4-minor-harmonic:		b3,d5,f#4,a#4,c#4,b4,d4,f#5,g4		
+
+e3-greek-mixolydian-diatonic:	e2,e3,f3,g3,a3,a#3,c4,d4,e4
+e4-greek-mixolydian-diatonic:	e3,e4,f4,g4,a4,a#4,c5,d5,e5
+e5-greek-mixolydian-diatonic:	e4,e5,f5,g5,a5,a#5,c6,d6,e6
+e6-greek-mixolydian-diatonic:	e5,e6,f6,g6,a6,a#6,c7,d7,e7
+
+//alternative order: -0--7--3--5--1--6--2--8--4-
+e4-greek-mixolydian-diatonic-alt: e3,d5,g4,a#4,e4,c5,f4,e5,a4                                
+f4-greek-mixolydian-diatonic-alt: f3,d#5,g#4,b4,f4,c#5,f#4,f5,a#4                                
+
+c3-phrygian:			c2,c3,c#3,d#3,f3,g3,g#3,a#3,c4		
+c4-phrygian:			c3,c4,c#4,d#4,f4,g4,g#4,a#4,c5		
+c5-phrygian:			c4,c5,c#5,d#5,f5,g5,g#5,a#5,c6		
+
+e2-phrygian:			e1,e2,f2,g2,a2,b2,c3,d3,e3		
+e3-phrygian:			e2,e3,f3,g3,a3,b3,c4,d4,e4		
+e4-phrygian:			e3,e4,f4,g4,a4,b4,c5,d5,e5		
+e5-phrygian:			e4,e5,f5,g5,a5,b5,c6,d6,e6		
+f4-phrygian:			f3,f4,f#4,g#4,a#4,c5,c#5,d#5,f5		
+f5-phrygian:			f4,f5,f#5,g#5,a#5,c6,c#6,d#6,f6		
+
+//alternative order: 1,2,8,3,7,4,6,5 (positions of notes from high to low)
+e3-phrygian-alt:		e2,e4,d4,b3,g3,e3,f3,a3,c4
+
+//linear = simple clockwise order
+e3-major-flat:			e2,e3,f#3,g#3,a3,b3,c4,d4,e4
+e4-major-flat:			e3,e4,f#4,g#4,a4,b4,c5,d5,e5
+e3-major-linear:		e2,e3,f#3,g#3,a3,b3,c#4,d#4,e4
+e4-major-linear:		e3,e4,f#4,g#4,a4,b4,c#5,d#5,e5
+f3-major-linear:		f2,f3,g3,a3,b3,c4,d4,e4,f4
+f4-major-linear:		f3,f4,g4,a4,b4,c5,d5,e5,f5
+f5-major-linear:		f4,f5,g5,a5,b5,c6,d6,e6,f6
+
+a1-minor:	a0,a1,b1,c2,d2,e2,f2,g2,a2		//with G
+a2-minor:	a1,a2,b2,c3,d3,e3,f3,g3,a3		//with G
+a3-minor:	a2,a3,b3,c4,d4,e4,f4,g4,a4		//with G
+a4-minor:	a3,a4,b4,c5,d5,e5,f5,g5,a5		//with G
+a1-minor-sharp:	a0,a1,b1,c2,d2,e2,f2,g#2,a2		//with G#
+a2-minor-sharp:	a1,a2,b2,c3,d3,e3,f3,g#3,a3		//with G#
+a3-minor-sharp:	a2,a3,b3,c4,d4,e4,f4,g#4,a4		//with G#
+a4-minor-sharp:	a3,a4,b4,c5,d5,e5,f5,g#5,a5		//with G#
+a5-minor-sharp:	a4,a5,b5,c6,d6,e6,f6,g#6,a6		//with G#
+
+a4-major-flat:	a3,a4,b4,c#5,d5,e5,f5,g5,a5		//with F & G
+a5-major-flat:	a4,a5,b5,c#6,d6,e6,f6,g6,a6		//with F & G
+
+[samples_map]
+
+//format is: 
+//sample_number: sample_length (in bytes), you can a comment with filename for your convenience	
+
+//191860 //0131a.bin
+//169204 //0131b_reverb_reso_60hz.bin
+1:361064
+
+//263848 //0131c_src.bin
+//177892 //0131c2_60hz.bin
+//217860 //0131c3_60hz_120hz_100pc.bin
+2:659600
+
+//748334 //0140_01s.bin
+//648360 //0140_02s.bin
+//751660 //0140_03s.bin
+//646370 //0140_04.bin
+//780246 //0140_05.bin
+3:3574970
+
+//679872 //0143_yishama_01noise_f2.bin
+//363832 //0143_yishama_02_f3.bin
+//639576 //0143_yishama_03_gS3.bin
+//346700 //0143_yishama_04_c4.bin
+4:2029980
+
+//glockenspiel
+//444132 //0gl1vol.bin
+//794424 //1202_093351_sel2_01.bin
+//727080 //1202_093351_sel2_05.bin
+//124200 //1202_093351_sel2_06.bin
+5:2089836 //all 4
+
+6:174902 //A3[2].bin
+
+//54818 //b1a_0132a.bin
+//53058 //b1b_wood1_02.bin
+//57602 //b1c_wood1_02b.bin
+7:165478
+
+//242634 //b2a_0132b_rich_hall.bin
+//245980 //b2b_0132a_bright_hall.bin
+//223732 //b2c_wood1_02_rev.bin
+8:712346
+
+//208576 //djembe_01.wav
+//200412 //djembe_02.wav
+//145016 //djembe_03.wav
+//181326 //djembe_04.wav
+9:735330
+
+//318580 //g1a_0134a.bin
+//264868 //g1c_0134b_norm.bin
+//389270 //g1d_0133b.bin
+10:972718
+
+//232778 //Hang_1_D4_Pass.bin
+//274096 //Hang_1_D4_Sharp.bin
+//380516 //Hang_1_D4_Soft.bin
+11:887390
+
+12:614814 //nataraj_01.bin
+
+13:544412 //steel_01.bin
+14:709146 //steel_02_fix.bin
+
+//220314 //x_JHP1_C2.bin
+//219924 //x_JHP2_C.bin
+15:440238
+
+16:426228 //x_thaigong.ff.bin
+
+[timbre_segments]
+
+//if segments are not defined for a sample, the patch is considered to be single-timbral
+
+//format is: 
+
+//seg_{sample_number}:[list of segment file lengths],[list of segment notes],[list of segment fine tuning]
+//file lenghts should include header if the format is wav (it will be subtracted based on SAMPLE_FORMAT_HEADER_LENGTH)
+//fine tunings should be 1.0 if no adjustment required (then the frequency shift is calculated from note info only)
+
+//map_{sample_number}:[basic velocity segments mapping to notes / higher velocity segments mapping to notes / ...]
+
+seg_1:[191860,169204],[c3,c3],[1.0,1.0]
+map_1:[c3,0 / 0,c3]
+
+//all 3
+//seg_2:[263848,177892,217860],[f3,f3,f3],[1.0,1.0,1.0]
+//map_2:[f3,0,0 / 0,f3,0 / 0,0,f3]
+
+//first 2 only
+seg_2:[263848,177892],[f3,f3],[1.0,1.0]
+map_2:[f3,0 / 0,f3]
+
+seg_3:[748334,648360,751660],[g3,g3,g3],[1.0,1.0,1.0]    
+map_3:[g3,0,0 / 0,g3,0 / 0,0,g3]
+
+//all 4
+//seg_4:[679872,363832,639576,346700],[f2,f3,g#3,c4],[1.0,1.0,1.0,1.0]
+//map_4:[f2,f3,g#3,0 / f2,f3,g#3,c4 / 0,f3,g#3,c4]
+
+//1-3
+seg_4:[679872,363832,639576],[f2,f3,g#3],[1.0,1.0,1.0]
+map_4:[f2,f3,0 / 0,0,g#3]
+
+//2-4
+//seg_4:[679872,363832,639576,346700],[f2,f3,g#3,c4],[1.0,1.0,1.0,1.0]
+//map_4:[0,f3,g#3,0 / 0,f3,g#3,c4 / 0,0,g#3,c4]
+
+//glockenspiel (4)
+//seg_5:[794468,808306,727124,124244],[a5,a5,a6,a7],[1.0,1.0,1.0,1.0] //wav lenghts!
+//map_5:[a5,0,a6,a7 / 0,a5,a6,a7]
+
+//glockenspiel, first only (5)
+seg_5:[444132],[a5],[1.0]
+map_5:[a5]
+
+//glockenspiel, last only (5) -> bad
+//seg_5:[444132,794424,808262,727080,124200],[a5,a5,a5,a6,a7],[1.0,1.0,1.0,1.0,1.0]
+//map_5:[0,0,0,0,a5 / 0,0,0,0,a5 / 0,0,0,0,a5]
+
+seg_7:[54818,53058,57602],[d4,d4,a#4],[1.0,1.0,1.0]
+map_7:[d4,0,a#4 / 0,d4,a#4]
+
+seg_8:[242634,245980,223732],[d4,d4,d4],[1.0,1.0,1.0]
+map_8:[d4,0,0 / 0,d4,0 / 0,0,d4]
+
+seg_9:[208576,200412,145016,181326],[d3,d3,d3,d3],[1.0,1.0,1.0,1.0]
+//map_9:[d3,0,0,0 / 0,d3,0,d4 / 0,0,d3,d4]
+map_9:[d3,0,0,0 / 0,0,d3,0 / 0,0,0,d3]
+
+//glass all 3
+//seg_10:[318624,264912,389314],[g4,g4,g4],[1.0,1.0,1.0] //wav lenghts!
+//map_10:[g4,0,0 / 0,g4,0 / 0,0,g4]
+
+//glass first one only
+seg_10:[318580],[g4],[1.0]
+map_10:[g4]
+
+//Hang_1_D4 - all 3
+//seg_11:[232822,274140,380560],[d#4,d#4,d#4],[1.0,1.0,1.0] //wav lenghts!
+//map_11:[d#4,0,0 / 0,d#4,0 / 0,0,d#4]
+
+//Hang_1_D4 - 2nd and 3rd only
+seg_11:[232778,274096,380516],[d#4,d#4,d#4],[1.0,1.0,1.0]
+map_11:[0,d#4,0 / 0,0,d#4]
+
+seg_15:[220314,219924],[c3,c3],[1.0,1.0]
+//map_15:[c3,0 / 0,c3]
+//map_15:[c3,0 / c3,0 / 0,c3]
+map_15:[c3,0]
+
+[samples_tuning]
+
+//format is: 
+//sample_number: tuning_coeff
+
+//using the tuning_coeff we need to shift all samples to note A4 (440Hz) or A5 (880Hz) as that's the default in the drum's tuning
+//we select one of these depending on the timbre and which harmonic we want to make the major one (which sounds better)
+//in equal temperament, one semitone step coefficient is 1.0594630943592952645618252949463 = 2^(1/12)
+
+//the shift coefficient can be calculated as 2^(semitones/12), or 2^(-semitones/12) if shifting down 
+//alternatively as semitone coefficient powered to the number of semitones, or the reciprocal of this value (1/x) if shifting down 
+
+1:1.0
+2:1.0
+3:1.0
+4:1.0
+5:1.0
+6:0.94387431		//A3[2].wav needs to get 1 semitone down
+7:1.0
+8:1.0
+9:1.0
+10:1.0
+11:1.0
+12:1.78179743628	//nataraj_01.bin, B3: needs to get 10 semitones up
+13:1.33483985417	//steel_01.wav, E4: needs to be shifted 5 semitones up to get to A5
+14:1.122462			//steel_02_fix.wav, G4: needs to get 2 semitones up to get to A5
+//15:0.840896415253	//JHP_C.wav & JHP_C2.wav, C3: needs to get 3 semitones down
+15:1.0
+16:0.74915353		//x_thaigong.ff.wav, C#2: needs to get 5 semitones down (or 7 up)
+
+[end]
+
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
+-------------------------------------
