@@ -23,7 +23,7 @@
 #include "codec.h"
 #include "board.h"
 
-#include "dsp/reverb.h"
+#include "dsp/Reverb.h"
 
 #define ECHO_BUFFER_STATIC //needs to be dynamic to support other engines, but that did not work due to ESP32 malloc limitation (largest free block not large enough)
 
