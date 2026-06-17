@@ -27,6 +27,7 @@
 
 #include "board.h"
 #include "main.h"
+#include "hw/serial_cmd.h"
 
 extern "C" void app_main(void)
 {
@@ -94,6 +95,9 @@ extern "C" void app_main(void)
 
 	printf("enabling MIDI, drum_init_MIDI(%d,%d)\n", MIDI_UART, 1);
     drum_init_MIDI(MIDI_UART, 1); //midi out enabled
+
+    printf("main(): starting task [serial_command_task]\n");
+    xTaskCreate((TaskFunction_t)&serial_command_task, "serial_cmd_task", 4096, NULL, 5, NULL);
 
     load_all_settings();
 
@@ -245,6 +249,18 @@ extern "C" void app_main(void)
 		accelerometer_calibrate();
 		#endif
 
+		/* Serial command: honour explicit patch-switch requests before the normal cycle logic */
+		if(serial_patch_request_type != -1)
+		{
+			event_next_channel = serial_patch_request_type;
+			if(serial_patch_request_type == EVENT_NEXT_CHANNEL_METAL && serial_patch_request_index >= 0)
+				patch_metal_ptr = serial_patch_request_index - 1; /* loop does ptr++ before use */
+			else if(serial_patch_request_type == EVENT_NEXT_CHANNEL_WOOD && serial_patch_request_index >= 0)
+				patch_wood_ptr = serial_patch_request_index - 1;
+			serial_patch_request_type  = -1;
+			serial_patch_request_index = -1;
+		}
+
 		if(event_next_channel==EVENT_NEXT_CHANNEL_METAL)
 		{
 			patch_metal_ptr++;
@@ -252,10 +268,12 @@ extern "C" void app_main(void)
 			{
 				patch_metal_ptr = 0;
 			}
+			current_patch_type  = EVENT_NEXT_CHANNEL_METAL;
+			current_patch_index = patch_metal_ptr;
 			printf("main(): starting \"metal\" patch #%d: sample = %d, tuning = %f, notes = [ ", patch_metal_ptr, samples_metal[patch_metal_ptr], tuning_coeffs[samples_metal[patch_metal_ptr]]);
 			for(int n=0;n<9;n++) { printf("%d ", notes_metal[patch_metal_ptr][n]); } printf("]\n");
 			//patch scales are arranged in one array, starting with wood, then metal. here the patch number = patches_found_wood + patch_metal_ptr
-			sample_drum(samples_metal[patch_metal_ptr], tuning_coeffs[samples_metal[patch_metal_ptr]], notes_metal[patch_metal_ptr], patches_found_wood + patch_metal_ptr);
+			sample_drum(samples_metal[patch_metal_ptr], tuning_coeffs[samples_metal[patch_metal_ptr]] * tuning_global_multiplier, notes_metal[patch_metal_ptr], patches_found_wood + patch_metal_ptr);
 		}
 		else if(event_next_channel==EVENT_NEXT_CHANNEL_WOOD)
 		{
@@ -264,14 +282,18 @@ extern "C" void app_main(void)
 			{
 				patch_wood_ptr = 0;
 			}
+			current_patch_type  = EVENT_NEXT_CHANNEL_WOOD;
+			current_patch_index = patch_wood_ptr;
 			printf("main(): starting \"wood\" patch #%d: sample = %d, tuning = %f, notes = [ ", patch_wood_ptr, samples_wood[patch_wood_ptr], tuning_coeffs[samples_wood[patch_wood_ptr]]);
 			for(int n=0;n<9;n++) { printf("%d ", notes_wood[patch_wood_ptr][n]); } printf("]\n");
 			//patch number = patch_wood_ptr
-			sample_drum(samples_wood[patch_wood_ptr], tuning_coeffs[samples_wood[patch_wood_ptr]], notes_wood[patch_wood_ptr], patch_wood_ptr);
+			sample_drum(samples_wood[patch_wood_ptr], tuning_coeffs[samples_wood[patch_wood_ptr]] * tuning_global_multiplier, notes_wood[patch_wood_ptr], patch_wood_ptr);
 		}
 
 		else if(event_next_channel==EVENT_NEXT_CHANNEL_BOTH)
 		{
+			current_patch_type  = EVENT_NEXT_CHANNEL_BOTH;
+			current_patch_index = 0;
 			printf("main(): starting \"reverb\" patch\n");
 			channel_reverb();
 		}
