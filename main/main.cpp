@@ -17,6 +17,8 @@
 //#define I2C_SCANNER
 #define I2C_HW_CHECK
 
+//#define BUTTON_TEST_MODE
+
 //#define ENABLE_MCLK				//disable when debugging
 #ifdef ENABLE_MCLK
 #define ENABLE_MCLK_ON_START
@@ -41,6 +43,8 @@ extern "C" void app_main(void)
     //hold the power on
 	drum_init_power();
 #endif
+
+// BUTTON_TEST_MODE: early version disabled, test now runs after full init (see below)
 
     i2c_master_init(0);
     gpio_set_level(CODEC_RST_PIN, 1);  //release the codec reset
@@ -74,6 +78,12 @@ extern "C" void app_main(void)
 
 	//drum_test_buttons();
 	//drum_LED_expander_test();
+
+	int nvs_res = nvs_flash_init();
+	if(nvs_res != ESP_OK)
+	{
+		printf("nvs_flash_init() returned %d\n", nvs_res);
+	}
 
 	drum_init_buttons_GPIO();
 
@@ -235,6 +245,10 @@ extern "C" void app_main(void)
     int memory_loss;
 
     int patch_metal_ptr = -1, patch_wood_ptr = -1;
+
+#ifdef BUTTON_TEST_MODE
+    drum_test_buttons(); // loops forever — full init already done above
+#endif
 
     event_next_channel = EVENT_NEXT_CHANNEL_METAL; //start with the first metal patch
 

@@ -82,21 +82,39 @@ void drum_shutdown()
 
 void drum_test_buttons()
 {
-	int val;
-	printf("drum_test_buttons()\n");
+	/* Print a header once, then print a line only when any button state changes.
+	   Each column shows:  raw GPIO level / ON-macro result (1=pressed)
+	   PWR  (GPIO35, active-HIGH)
+	   WOOD (GPIO39, active-HIGH)
+	   METAL(GPIO36, active-LOW)
+	   MINUS(GPIO25, active-LOW)
+	   PLUS (GPIO26, active-LOW) */
+	printf("\nBTN raw/ON:  PWR35  WOOD39 METAL36 MINUS25 PLUS26\n");
+
+	int prev[5] = {-1,-1,-1,-1,-1};
+
 	while(1)
 	{
-		val = gpio_get_level(BUTTON_U1_PIN);
-		printf("(+)PWR=%d,",val);
-		val = gpio_get_level(BUTTON_U25_PIN);
-		printf("(-)METAL=%d,",val);
-		val = gpio_get_level(BUTTON_U34_PIN);
-		printf("(+)WOOD=%d,",val);
-		val = gpio_get_level(BUTTON_U42_PIN);
-		printf("(-)MINUS=%d,",val);
-		val = gpio_get_level(BUTTON_U53_PIN);
-		printf("(-)PLUS=%d\n",val);
-		Delay(100);
+		int cur[5];
+		cur[0] = gpio_get_level(BUTTON_U1_PIN);
+		cur[1] = gpio_get_level(BUTTON_U34_PIN);
+		cur[2] = gpio_get_level(BUTTON_U25_PIN);
+		cur[3] = gpio_get_level(BUTTON_U42_PIN);
+		cur[4] = gpio_get_level(BUTTON_U53_PIN);
+
+		int changed = 0;
+		for(int i = 0; i < 5; i++) if(cur[i] != prev[i]) { changed = 1; prev[i] = cur[i]; }
+
+		if(changed)
+		{
+			printf("BTN raw/ON:  %d/%d    %d/%d    %d/%d     %d/%d     %d/%d\n",
+				cur[0], BUTTON_U1_ON,
+				cur[1], BUTTON_U4_ON,
+				cur[2], BUTTON_U5_ON,
+				cur[3], BUTTON_U2_ON,
+				cur[4], BUTTON_U3_ON);
+		}
+		Delay(20);
 	}
 }
 
