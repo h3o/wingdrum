@@ -75,6 +75,8 @@ extern "C" void app_main(void)
 	//drum_test_buttons();
 	//drum_LED_expander_test();
 
+	drum_init_buttons_GPIO();
+
 	printf("main(): starting task [process_buttons_controls_drum]\n");
 	xTaskCreatePinnedToCore((TaskFunction_t)&process_buttons_controls_drum, "process_buttons_controls_task", 4096, NULL, TASK_PRIORITY_BUTTONS, NULL, 1);
 
