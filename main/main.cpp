@@ -70,6 +70,8 @@ extern "C" void app_main(void)
     //}
 #endif
 
+	glo_run = 1;
+
 	//printf("init_echo_buffer();\n");
 	init_echo_buffer();
 
