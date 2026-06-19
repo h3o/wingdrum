@@ -885,7 +885,7 @@ void touch_pad_process(void *pvParameters)
 
 	while(1)
 	{
-		ets_delay_us(100);
+		vTaskDelay(pdMS_TO_TICKS(1));
 
 		if(touch_pad_calibration_cnt)
 		{
