@@ -97,7 +97,7 @@ extern "C" void app_main(void)
     drum_init_MIDI(MIDI_UART, 1); //midi out enabled
 
     printf("main(): starting task [serial_command_task]\n");
-    xTaskCreate((TaskFunction_t)&serial_command_task, "serial_cmd_task", 4096, NULL, 5, NULL);
+    xTaskCreate((TaskFunction_t)&serial_command_task, "serial_cmd_task", 4096, NULL, 1, NULL);
 
     load_all_settings();
 
@@ -237,6 +237,8 @@ extern "C" void app_main(void)
     event_next_channel = EVENT_NEXT_CHANNEL_METAL; //start with the first metal patch
 
     while(!touch_pad_calibrated); //wait until touch pad calibrated
+
+    serial_cmd_boot_ready = 1; /* allow serial task to install UART0 driver now */
 
     while(glo_run)
     {

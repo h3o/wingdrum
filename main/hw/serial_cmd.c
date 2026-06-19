@@ -40,6 +40,7 @@ int   serial_patch_request_type  = -1;
 int   serial_patch_request_index = -1;
 int   current_patch_type  = EVENT_NEXT_CHANNEL_METAL;
 int   current_patch_index = 0;
+volatile int serial_cmd_boot_ready = 0;
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                              */
@@ -319,6 +320,12 @@ static void handle_command(char *line)
 
 void serial_command_task(void *pvParameters)
 {
+    /* Wait for the main boot sequence (including I2S driver install) to finish
+       before claiming a UART0 interrupt, to avoid intr-slot conflicts. */
+    while (!serial_cmd_boot_ready) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
     uart_config_t cfg = {
         .baud_rate  = 115200,
         .data_bits  = UART_DATA_8_BITS,

@@ -31,6 +31,10 @@ extern int serial_patch_request_index;
 extern int current_patch_type;
 extern int current_patch_index;
 
+/* Set to 1 by app_main once the full boot sequence (including I2S init) is
+   complete.  The serial task must not install the UART0 driver before this. */
+extern volatile int serial_cmd_boot_ready;
+
 void serial_command_task(void *pvParameters);
 
 #ifdef __cplusplus
