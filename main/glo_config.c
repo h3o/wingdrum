@@ -58,79 +58,64 @@ void unmap_config_file() {
 	//printf("unmapped!\n");
 }
 
-int read_line(char **line_ptr, char *line_buffer) {
-	//read a line, look for newline or comment, whichever is found earlier
-	//printf("read_line() starting from %p\n", line_ptr[0]);
+/* Returns the line length (0 for empty/blank lines), or -1 when buf_end is
+   reached.  Callers must break their parse loop on -1.
+   Uses memchr so it never reads past the mapped flash region. */
+int read_line(char **line_ptr, char *line_buffer, const char *buf_end) {
+	if (line_ptr[0] >= buf_end) return -1;
 
-	char *cr, *lf, *comment, *line_end;
-	int line_length;
+	size_t remaining = (size_t)(buf_end - line_ptr[0]);
 
-	cr = strstr(line_ptr[0], "\r"); //0x0D
-	lf = strstr(line_ptr[0], "\n"); //0x0A
-	comment = strstr(line_ptr[0], "//");
-
-	//printf("read_line() cr=%p, lf=%p, comment=%p\n", cr, lf, comment);
-
-	line_end = NULL;
-
-	if (comment != NULL) {
-		line_end = comment;
-	} else if (cr != NULL) {
-		line_end = cr;
-	} else if (lf != NULL) {
-		line_end = lf;
+	char *cr      = (char*)memchr(line_ptr[0], '\r', remaining);
+	char *lf      = (char*)memchr(line_ptr[0], '\n', remaining);
+	char *comment = NULL;
+	for (const char *p = line_ptr[0]; p + 1 < buf_end; p++) {
+		if (p[0] == '/' && p[1] == '/') { comment = (char*)p; break; }
 	}
 
-	if (comment < line_end && comment != NULL) {
-		line_end = comment;
-	}
-	if (cr < line_end && cr != NULL) {
-		line_end = cr;
-	}
-	if (lf < line_end && lf != NULL) {
-		line_end = lf;
-	}
+	char *line_end = NULL;
+	if (comment != NULL) { line_end = comment; }
+	else if (cr  != NULL) { line_end = cr; }
+	else if (lf  != NULL) { line_end = lf; }
 
-	//printf("read_line() line_end=%p\n", line_end);
-
-	//printf("line %d: nearest cr = %p, lf = %p, comment = %p, line end at = %p\n", lines_parsed, cr, lf, comment, line_end);
+	if (comment != NULL && comment < line_end) { line_end = comment; }
+	if (cr      != NULL && cr      < line_end) { line_end = cr; }
+	if (lf      != NULL && lf      < line_end) { line_end = lf; }
 
 	if (line_end == NULL) {
-		printf("read_line() no line_end found, returning 0\n");
-		return 0;
+		/* No line terminator within the mapped region — treat as end of config */
+		line_ptr[0] = (char*)buf_end;
+		return -1;
 	}
 
-	line_length = (int) (line_end - line_ptr[0]);
-	//printf("read_line() line_end found, line_length=%d\n", line_length);
+	int line_length = (int)(line_end - line_ptr[0]);
 
 	if (line_length > CONFIG_LINE_MAX_LENGTH) {
-		printf(
-				"read_line(): detected line length (%d) longer than CONFIG_LINE_MAX_LENGTH (%d)\n",
+		printf("read_line(): detected line length (%d) longer than CONFIG_LINE_MAX_LENGTH (%d)\n",
 				line_length, CONFIG_LINE_MAX_LENGTH);
 		while (1) {
-			error_blink(ERROR_BLINK_PATTERN_1256_3478, 200); //blink forever
-		}; //halt
+			error_blink(ERROR_BLINK_PATTERN_1256_3478, 200);
+		}
 	}
 	strncpy(line_buffer, line_ptr[0], line_length);
 
-	//roll back spaces and tabs
-	int space_or_tab_found = 1;
-	while (space_or_tab_found) {
-		space_or_tab_found = 0;
-		while (line_buffer[line_length - 1] == '\t') {
-			line_length--;
-			space_or_tab_found = 1;
-		}
-		while (line_buffer[line_length - 1] == ' ') {
-			line_length--;
-			space_or_tab_found = 1;
-		}
-	}
+	while (line_length > 0 && (line_buffer[line_length - 1] == '\t' || line_buffer[line_length - 1] == ' '))
+		line_length--;
 
 	line_buffer[line_length] = 0;
-	//printf("read_line() string copied over\n");
 
-	line_ptr[0] = lf + 1; //move the pointer to new line
+	/* Advance past the line terminator.  lf is preferred because it handles
+	   both \n (Unix) and \r\n (Windows) with a single increment past the \n. */
+	if (lf != NULL && lf >= line_end) {
+		line_ptr[0] = lf + 1;
+	} else if (cr != NULL && cr >= line_end) {
+		line_ptr[0] = cr + 1;
+	} else {
+		/* Line ended with // comment and no newline found within bounds */
+		line_ptr[0] = (char*)buf_end;
+	}
+	if (line_ptr[0] > buf_end) line_ptr[0] = (char*)buf_end;
+
 	return line_length;
 }
 
@@ -151,6 +136,7 @@ void get_samples_map(int *result) {
 	//printf("get_samples_map(): map_config_file returned config_buffer=%p\n", config_buffer);
 
 	char *line_ptr = config_buffer;
+	const char *config_end = config_buffer + CONFIG_SIZE;
 	int line_length, lines_parsed = 0;
 	char *line_buffer = (char*) malloc(CONFIG_LINE_MAX_LENGTH + 2);
 	char *lptr;
@@ -166,7 +152,8 @@ void get_samples_map(int *result) {
 
 	while (!done) {
 		//printf("get_samples_map(): reading line %d\n", lines_parsed);
-		line_length = read_line(&line_ptr, line_buffer);
+		line_length = read_line(&line_ptr, line_buffer, config_end);
+		if (line_length < 0) break;
 		//printf("get_samples_map(): line %d read, length = %d, line = \"%s\"\n", lines_parsed, line_length, line_buffer);
 
 		if (line_length) {
@@ -241,6 +228,7 @@ char *get_line_in_block(const char *block_name, char *prefix)
 	//printf("get_line_in_block(): map_config_file returned config_buffer=%p\n", config_buffer);
 
 	char *line_ptr = config_buffer;
+	const char *config_end = config_buffer + CONFIG_SIZE;
 	int line_length, lines_parsed = 0;
 	char *line_buffer = (char*) malloc(CONFIG_LINE_MAX_LENGTH + 2);
 
@@ -250,7 +238,8 @@ char *get_line_in_block(const char *block_name, char *prefix)
 
 	while (!done) {
 		//printf("get_line_in_block(): reading line %d\n", lines_parsed);
-		line_length = read_line(&line_ptr, line_buffer);
+		line_length = read_line(&line_ptr, line_buffer, config_end);
+		if (line_length < 0) break;
 		//printf("get_line_in_block(): line %d read, length = %d, line = \"%s\"\n", lines_parsed, line_length, line_buffer);
 
 		if (!done && line_length) {
@@ -309,6 +298,7 @@ char **get_all_lines_in_block(const char *block_name, char *prefix, int *lines_f
 	//printf("get_all_lines_in_block(): map_config_file returned config_buffer=%p\n", config_buffer);
 
 	char *line_ptr = config_buffer;
+	const char *config_end = config_buffer + CONFIG_SIZE;
 	int line_length, lines_parsed = 0;
 	char *line_buffer = (char*) malloc(CONFIG_LINE_MAX_LENGTH + 2);
 
@@ -318,8 +308,9 @@ char **get_all_lines_in_block(const char *block_name, char *prefix, int *lines_f
 
 	while (!done) {
 		//printf("get_line_in_block(): reading line %d\n", lines_parsed);
-		line_length = read_line(&line_ptr, line_buffer);
+		line_length = read_line(&line_ptr, line_buffer, config_end);
 		//printf("get_line_in_block(): line %d read, length = %d, line = \"%s\"\n", lines_parsed, line_length, line_buffer);
+		if (line_length < 0) break;
 
 		if (!done && line_length) {
 
@@ -806,6 +797,7 @@ int load_settings(settings_t *settings, const char* block_name)
 	}
 
 	char *line_ptr = config_buffer;
+	const char *config_end = config_buffer + CONFIG_SIZE;
 	int line_length, lines_parsed = 0;
 	char *line_buffer = (char*) malloc(CONFIG_LINE_MAX_LENGTH + 2);
 
@@ -815,7 +807,8 @@ int load_settings(settings_t *settings, const char* block_name)
 
 	while (!done) {
 		//printf("load_settings(): reading line %d\n", lines_parsed);
-		line_length = read_line(&line_ptr, line_buffer);
+		line_length = read_line(&line_ptr, line_buffer, config_end);
+		if (line_length < 0) break;
 		//printf("load_settings(): line %d read, length = %d, line = \"%s\"\n", lines_parsed, line_length, line_buffer);
 
 		if (line_length) {
