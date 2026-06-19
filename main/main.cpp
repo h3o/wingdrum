@@ -97,7 +97,7 @@ extern "C" void app_main(void)
     drum_init_MIDI(MIDI_UART, 1); //midi out enabled
 
     printf("main(): starting task [serial_command_task]\n");
-    xTaskCreate((TaskFunction_t)&serial_command_task, "serial_cmd_task", 4096, NULL, 1, NULL);
+    xTaskCreatePinnedToCore((TaskFunction_t)&serial_command_task, "serial_cmd_task", 4096, NULL, 1, NULL, 0);
 
     load_all_settings();
 
