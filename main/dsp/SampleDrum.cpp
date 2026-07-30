@@ -22,6 +22,7 @@
 #include <hw/signals.h>
 #include <hw/gpio.h>
 #include <hw/midi.h>
+#include <hw/serial_cmd.h>
 #include <string.h>
 #include <math.h>
 #include "freertos/portmacro.h"	//for portMAX_DELAY
@@ -1182,57 +1183,64 @@ IRAM_ATTR void sample_drum(int sample, float tuning, int *notes, int patch_numbe
 
 		if (TIMING_EVERY_250_MS == 4999) //4Hz
 		{
-			if(SENSOR_DELAY_ACTIVE && !scale_settings && !delay_settings)
+			/* Suspended once SET_EFFECT/SET_ECHO_LEN sets a value remotely,
+			   so tilt doesn't immediately override it (e.g. drum lying flat
+			   on a desk). Resumes once the player switches patch with a
+			   physical button press — see ui.c. */
+			if(!serial_effect_override)
 			{
-				if(SENSOR_DELAY_9)
+				if(SENSOR_DELAY_ACTIVE && !scale_settings && !delay_settings)
 				{
-				    ECHO_MIXING_GAIN_MUL_TARGET = 8;
-				    //ECHO_MIXING_GAIN_DIV = 10;
+					if(SENSOR_DELAY_9)
+					{
+					    ECHO_MIXING_GAIN_MUL_TARGET = 8;
+					    //ECHO_MIXING_GAIN_DIV = 10;
+					}
+					else if(SENSOR_DELAY_8)
+					{
+					    ECHO_MIXING_GAIN_MUL_TARGET = 6;
+					    //ECHO_MIXING_GAIN_DIV = 10;
+					}
+					else if(SENSOR_DELAY_7)
+					{
+					    ECHO_MIXING_GAIN_MUL_TARGET = 5;
+					    //ECHO_MIXING_GAIN_DIV = 10;
+					}
+					else if(SENSOR_DELAY_6)
+					{
+					    ECHO_MIXING_GAIN_MUL_TARGET = 4;
+					    //ECHO_MIXING_GAIN_DIV = 10;
+					}
+					else if(SENSOR_DELAY_5)
+					{
+					    ECHO_MIXING_GAIN_MUL_TARGET = 3;
+					    //ECHO_MIXING_GAIN_DIV = 10;
+					}
+					else if(SENSOR_DELAY_4)
+					{
+					    ECHO_MIXING_GAIN_MUL_TARGET = 2.5;
+					    //ECHO_MIXING_GAIN_DIV = 10;
+					}
+					else if(SENSOR_DELAY_3)
+					{
+					    ECHO_MIXING_GAIN_MUL_TARGET = 2;
+					    //ECHO_MIXING_GAIN_DIV = 10;
+					}
+					else if(SENSOR_DELAY_2)
+					{
+					    ECHO_MIXING_GAIN_MUL_TARGET = 1.5;
+					    //ECHO_MIXING_GAIN_DIV = 10;
+					}
+					else
+					{
+					    ECHO_MIXING_GAIN_MUL_TARGET = 1;
+					    //ECHO_MIXING_GAIN_DIV = 10;
+					}
 				}
-				else if(SENSOR_DELAY_8)
+				else if(!delay_settings)
 				{
-				    ECHO_MIXING_GAIN_MUL_TARGET = 6;
-				    //ECHO_MIXING_GAIN_DIV = 10;
+				    ECHO_MIXING_GAIN_MUL_TARGET = 0;
 				}
-				else if(SENSOR_DELAY_7)
-				{
-				    ECHO_MIXING_GAIN_MUL_TARGET = 5;
-				    //ECHO_MIXING_GAIN_DIV = 10;
-				}
-				else if(SENSOR_DELAY_6)
-				{
-				    ECHO_MIXING_GAIN_MUL_TARGET = 4;
-				    //ECHO_MIXING_GAIN_DIV = 10;
-				}
-				else if(SENSOR_DELAY_5)
-				{
-				    ECHO_MIXING_GAIN_MUL_TARGET = 3;
-				    //ECHO_MIXING_GAIN_DIV = 10;
-				}
-				else if(SENSOR_DELAY_4)
-				{
-				    ECHO_MIXING_GAIN_MUL_TARGET = 2.5;
-				    //ECHO_MIXING_GAIN_DIV = 10;
-				}
-				else if(SENSOR_DELAY_3)
-				{
-				    ECHO_MIXING_GAIN_MUL_TARGET = 2;
-				    //ECHO_MIXING_GAIN_DIV = 10;
-				}
-				else if(SENSOR_DELAY_2)
-				{
-				    ECHO_MIXING_GAIN_MUL_TARGET = 1.5;
-				    //ECHO_MIXING_GAIN_DIV = 10;
-				}
-				else
-				{
-				    ECHO_MIXING_GAIN_MUL_TARGET = 1;
-				    //ECHO_MIXING_GAIN_DIV = 10;
-				}
-			}
-			else if(!delay_settings)
-			{
-			    ECHO_MIXING_GAIN_MUL_TARGET = 0;
 			}
 			//printf("acc_res[1] = %f, ECHO_MIXING_GAIN_MUL = %f\n", acc_res[1], ECHO_MIXING_GAIN_MUL);
 		}

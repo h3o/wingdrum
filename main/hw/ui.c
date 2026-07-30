@@ -21,6 +21,7 @@
 #include <hw/init.h>
 #include <hw/signals.h>
 #include <hw/midi.h>
+#include <hw/serial_cmd.h>
 #include <string.h>
 
 #include <Interface.h>
@@ -652,6 +653,7 @@ void process_ui_events(void *pvParameters)
 			if(!delay_settings && !scale_settings)
 			{
 				event_next_channel = EVENT_NEXT_CHANNEL_WOOD;
+				serial_effect_override = 0; /* player grabbed the drum to switch patch directly */
 			}
 			else if(delay_settings)
 			{
@@ -666,6 +668,7 @@ void process_ui_events(void *pvParameters)
 			if(!delay_settings && !scale_settings)
 			{
 				event_next_channel = EVENT_NEXT_CHANNEL_METAL;
+				serial_effect_override = 0; /* player grabbed the drum to switch patch directly */
 			}
 			else if(delay_settings)
 			{
@@ -686,10 +689,12 @@ void process_ui_events(void *pvParameters)
 				echo_dynamic_loop_current_step = 8;
 				echo_dynamic_loop_length = echo_dynamic_loop_steps[echo_dynamic_loop_current_step];
 				printf("echo_dynamic_loop_current_step = %d, echo_dynamic_loop_length = %d\n", echo_dynamic_loop_current_step, echo_dynamic_loop_length);
+				serial_evt_effect();
 			}
 			if(!delay_settings && !scale_settings)
 			{
 				event_next_channel = EVENT_NEXT_CHANNEL_BOTH;
+				serial_effect_override = 0; /* player grabbed the drum to switch patch directly */
 			}
 			short_press_wood_metal_both = 0;
 		}
@@ -852,6 +857,8 @@ void change_scale()
 		memcpy(midi_scale_selected, &patch_notes[previous_scale*NOTES_PER_SCALE], NOTES_PER_SCALE*sizeof(int));
 		memcpy(micro_tuning_selected, &micro_tuning[previous_scale*NOTES_PER_SCALE], NOTES_PER_SCALE*sizeof(float));
 	}
+
+	serial_evt_slot();
 }
 
 void clear_micro_tuning(int scale_settings)
@@ -1018,6 +1025,8 @@ void adjust_delay_length(int delay_or_reverb)
 
 	echo_dynamic_loop_length = echo_dynamic_loop_steps[echo_dynamic_loop_current_step];
 	printf("echo_dynamic_loop_current_step = %d, echo_dynamic_loop_length = %d, led_blink_stop = %d\n", echo_dynamic_loop_current_step, echo_dynamic_loop_length, led_blink_stop);
+
+	serial_evt_effect();
 }
 
 void fine_adjust_delay_length(int direction)
@@ -1028,6 +1037,8 @@ void fine_adjust_delay_length(int direction)
 	if(echo_dynamic_loop_length<ECHO_BUFFER_LENGTH_MIN) echo_dynamic_loop_length = ECHO_BUFFER_LENGTH_MIN;
 
 	printf("adjust_echo_loop_length(%d): echo_dynamic_loop_length = %d\n", direction, echo_dynamic_loop_length);
+
+	serial_evt_effect();
 }
 
 void check_led_blink_timeout()

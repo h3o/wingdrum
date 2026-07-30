@@ -28,6 +28,7 @@
 #include "hw/ui.h"
 #include "hw/init.h"
 #include "hw/midi.h"
+#include "hw/signals.h"
 
 #define SERIAL_CMD_UART     UART_NUM_0
 #define SERIAL_CMD_BUF_SIZE 2048
@@ -41,6 +42,14 @@ int   serial_patch_request_index = -1;
 int   current_patch_type  = EVENT_NEXT_CHANNEL_METAL;
 int   current_patch_index = 0;
 volatile int serial_cmd_boot_ready = 0;
+int   serial_effect_override = 0;
+
+/* Depth as reported/accepted by SET_EFFECT:depth / GET_EFFECT_DEPTH is a
+   0-100 percentage of the same range the accelerometer drives via
+   ECHO_MIXING_GAIN_MUL_TARGET (see SampleDrum.cpp's SENSOR_DELAY_9 case
+   and ui.c's long_press_wood_metal_both handler, both of which use 8.0f
+   as the deepest setting). 100% == fully tilted. */
+#define ECHO_DEPTH_GAIN_MAX 8.0f
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                              */
@@ -67,6 +76,57 @@ static int parse_scale_text(char *text, int *out)
         if (p) p++;
     }
     return n;
+}
+
+/* ------------------------------------------------------------------ */
+/* Event notifications (EVT:*)                                          */
+/*                                                                      */
+/* Unsolicited lines announcing state changes (typically made on the    */
+/* hardware itself) so a connected host can keep its UI in sync.        */
+/* Hosts that only parse OK/ERR lines silently discard these, so the    */
+/* addition is backward compatible by design.                           */
+/* ------------------------------------------------------------------ */
+
+/* Shared formatter for GET_EFFECT ("OK:") and event ("EVT:EFFECT:").
+   Effect state is fully encoded in echo_dynamic_loop_current_step:
+   0-7 = "delay" bank (long->short), 8 and 17 = off, 9-16 = "short" bank,
+   -1 = custom length set via fine adjust / SET_ECHO_LEN.
+   Both banks drive the same echo_buffer/echo_dynamic_loop_length — this
+   is one delay effect with two preset ranges, NOT the polyphonic reverb
+   engine (that only exists in the SET_PATCH:reverb easter-egg channel
+   and has no remotely controllable parameters). */
+static void print_effect_state(const char *prefix)
+{
+    int step = echo_dynamic_loop_current_step;
+
+    if (step == 8 || step == ECHO_DYNAMIC_LOOP_LENGTH_ECHO_OFF ||
+        echo_dynamic_loop_length == 0)
+        printf("%soff\n", prefix);
+    else if (step >= 0 && step <= 7)
+        printf("%sdelay,%d\n", prefix, step);
+    else if (step >= 9 && step <= 16)
+        printf("%sshort,%d\n", prefix, step - 9);
+    else
+        printf("%scustom,%d\n", prefix, echo_dynamic_loop_length);
+}
+
+void serial_evt_slot(void)
+{
+    printf("EVT:SLOT:%d\n", selected_scale[current_patch]);
+}
+
+void serial_evt_effect(void)
+{
+    print_effect_state("EVT:EFFECT:");
+}
+
+void serial_evt_patch(void)
+{
+    const char *type;
+    if      (current_patch_type == EVENT_NEXT_CHANNEL_METAL) type = "metal";
+    else if (current_patch_type == EVENT_NEXT_CHANNEL_WOOD)  type = "wood";
+    else                                                      type = "reverb";
+    printf("EVT:PATCH:%s,%d\n", type, current_patch_index);
 }
 
 /* ------------------------------------------------------------------ */
@@ -287,6 +347,149 @@ static void cmd_set_scale_notes(const char *arg)
 }
 
 /* ------------------------------------------------------------------ */
+/* Slot (scale preset) selection                                        */
+/* ------------------------------------------------------------------ */
+
+static void cmd_get_slot(void)
+{
+    printf("OK:%d\n", selected_scale[current_patch]);
+}
+
+static void cmd_set_slot(const char *arg)
+{
+    int slot = atoi(arg);
+    if (slot < 0 || slot >= SCALES_PER_PATCH) {
+        printf("ERR:INVALID_SLOT (0-%d)\n", SCALES_PER_PATCH - 1);
+        return;
+    }
+    /* Mirror change_scale_up()/change_scale_down() exactly */
+    previous_scale = selected_scale[current_patch];
+    selected_scale[current_patch] = slot;
+    change_scale();
+    printf("OK:%d\n", slot);
+}
+
+/* ------------------------------------------------------------------ */
+/* Effect (delay/reverb engine) control                                 */
+/*                                                                      */
+/* The hardware flow (hold wood+metal -> pick effect -> confirm with    */
+/* power button) ultimately just writes echo_dynamic_loop_current_step  */
+/* and echo_dynamic_loop_length, then persists via                      */
+/* persistent_settings_store_delay().  These commands write the same    */
+/* variables directly, so no button choreography needs emulating.       */
+/* ------------------------------------------------------------------ */
+
+static void cmd_get_effect(void)
+{
+    print_effect_state("OK:");
+}
+
+/* The polyphonic reverb "easter egg" patch (SET_PATCH:reverb) is a
+   separate DSP path with no remotely controllable delay/reverb
+   parameters of its own — echo_dynamic_loop_* and ECHO_MIXING_GAIN_MUL*
+   aren't used there. Reject writes instead of silently accepting a
+   value the hardware won't act on. */
+static int effect_params_available(void)
+{
+    if (current_patch_type == EVENT_NEXT_CHANNEL_BOTH) {
+        printf("ERR:UNAVAILABLE_IN_POLY_REVERB\n");
+        return 0;
+    }
+    return 1;
+}
+
+/* SET_EFFECT:off | delay,<0-7> | short,<0-7> | depth,<0-100>
+   "delay" and "short" are the same echo/delay effect's two hardware
+   preset banks (wood/metal button while in the length menu) — there is
+   no separate reverb engine here. "depth" sets the wet/feedback amount
+   normally driven by accelerometer tilt (ECHO_MIXING_GAIN_MUL_TARGET);
+   any successful SET_EFFECT suspends that tilt control so the value
+   sticks — e.g. for the drum sitting flat on a desk — until the player
+   changes patch with a physical button press (see ui.c). */
+static void cmd_set_effect(const char *arg)
+{
+    if (!effect_params_available()) return;
+
+    if (strncmp(arg, "depth", 5) == 0) {
+        const char *comma = strchr(arg, ',');
+        int pct = comma ? atoi(comma + 1) : -1;
+        if (pct < 0 || pct > 100) { printf("ERR:INVALID_DEPTH (0-100)\n"); return; }
+
+        ECHO_MIXING_GAIN_MUL_TARGET = (float)pct / 100.0f * ECHO_DEPTH_GAIN_MAX;
+        serial_effect_override = 1;
+        printf("OK:%d\n", pct);
+        return;
+    }
+
+    int step;
+
+    if (strcmp(arg, "off") == 0) {
+        step = 8;  /* echo_dynamic_loop_steps[8] == 0 == effect off */
+    } else if (strncmp(arg, "delay", 5) == 0) {
+        const char *comma = strchr(arg, ',');
+        int idx = comma ? atoi(comma + 1) : 0;
+        if (idx < 0 || idx > 7) { printf("ERR:INVALID_INDEX (delay 0-7)\n"); return; }
+        step = idx;
+    } else if (strncmp(arg, "short", 5) == 0) {
+        const char *comma = strchr(arg, ',');
+        int idx = comma ? atoi(comma + 1) : 0;
+        if (idx < 0 || idx > 7) { printf("ERR:INVALID_INDEX (short 0-7)\n"); return; }
+        step = 9 + idx;
+    } else {
+        printf("ERR:USAGE SET_EFFECT:off|delay,<0-7>|short,<0-7>|depth,<0-100>\n");
+        return;
+    }
+
+    echo_dynamic_loop_current_step = step;
+    echo_dynamic_loop_length       = echo_dynamic_loop_steps[step];
+    persistent_settings_store_delay(step); /* = confirming with the power button */
+    serial_effect_override = 1;
+    printf("OK\n");
+}
+
+static void cmd_get_echo_len(void)
+{
+    printf("OK:%d\n", echo_dynamic_loop_length);
+}
+
+/* SET_ECHO_LEN:<samples> — free-form loop length, serial equivalent of
+   the hardware fine adjust (volume +/- inside the delay menu).
+   0 switches the effect off; other values are clamped to the same
+   limits fine_adjust_delay_length() enforces. */
+static void cmd_set_echo_len(const char *arg)
+{
+    if (!effect_params_available()) return;
+
+    int len = atoi(arg);
+
+    if (len == 0) {
+        echo_dynamic_loop_current_step = ECHO_DYNAMIC_LOOP_LENGTH_ECHO_OFF;
+        echo_dynamic_loop_length       = 0;
+        persistent_settings_store_delay(ECHO_DYNAMIC_LOOP_LENGTH_ECHO_OFF);
+        serial_effect_override = 1;
+        printf("OK:0\n");
+        return;
+    }
+
+    if (len > ECHO_BUFFER_LENGTH)     len = ECHO_BUFFER_LENGTH;
+    if (len < ECHO_BUFFER_LENGTH_MIN) len = ECHO_BUFFER_LENGTH_MIN;
+
+    echo_dynamic_loop_current_step = -1;    /* custom, as fine_adjust does */
+    echo_dynamic_loop_length       = len;
+    persistent_settings_store_delay(-len);  /* negative = raw length (ui.c convention) */
+    serial_effect_override = 1;
+    printf("OK:%d\n", len);
+}
+
+static void cmd_get_effect_depth(void)
+{
+    int pct = (int)(ECHO_MIXING_GAIN_MUL_TARGET / ECHO_DEPTH_GAIN_MAX * 100.0f + 0.5f);
+    if (pct < 0)   pct = 0;
+    if (pct > 100) pct = 100;
+    printf("OK:%d\n", pct);
+}
+
+/* ------------------------------------------------------------------ */
 /* Dispatcher                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -311,6 +514,13 @@ static void handle_command(char *line)
     else if (strncmp(line, "GET_PAD_TUNING:",  15) == 0) cmd_get_pad_tuning(line + 15);
     else if (strncmp(line, "SET_SCALE_DEF:",   14) == 0) cmd_set_scale_def(line + 14);
     else if (strncmp(line, "SET_SCALE_NOTES:", 16) == 0) cmd_set_scale_notes(line + 16);
+    else if (strcmp (line, "GET_SLOT")             == 0) cmd_get_slot();
+    else if (strncmp(line, "SET_SLOT:",         9) == 0) cmd_set_slot(line + 9);
+    else if (strcmp (line, "GET_EFFECT")           == 0) cmd_get_effect();
+    else if (strncmp(line, "SET_EFFECT:",      11) == 0) cmd_set_effect(line + 11);
+    else if (strcmp (line, "GET_ECHO_LEN")         == 0) cmd_get_echo_len();
+    else if (strncmp(line, "SET_ECHO_LEN:",    13) == 0) cmd_set_echo_len(line + 13);
+    else if (strcmp (line, "GET_EFFECT_DEPTH")     == 0) cmd_get_effect_depth();
     else    printf("ERR:UNKNOWN_CMD\n");
 }
 

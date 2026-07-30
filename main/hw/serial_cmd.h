@@ -31,11 +31,26 @@ extern int serial_patch_request_index;
 extern int current_patch_type;
 extern int current_patch_index;
 
+/* Set to 1 whenever SET_EFFECT/SET_ECHO_LEN successfully writes a value.
+   While set, the accelerometer-driven effect depth control (SampleDrum.cpp)
+   is suspended so a remotely-set value sticks — e.g. the drum sitting flat
+   on a desk. Cleared by ui.c when the player changes patch with a physical
+   wood/metal button press, since that means they've picked the drum up to
+   play it directly. */
+extern int serial_effect_override;
+
 /* Set to 1 by app_main once the full boot sequence (including I2S init) is
    complete.  The serial task must not install the UART0 driver before this. */
 extern volatile int serial_cmd_boot_ready;
 
 void serial_command_task(void *pvParameters);
+
+/* Event notification helpers (EVT:* lines).  Call from wherever the
+   corresponding state changes so a connected host can stay in sync.
+   Safe to call from any task — plain printf to UART0. */
+void serial_evt_slot(void);
+void serial_evt_effect(void);
+void serial_evt_patch(void);
 
 #ifdef __cplusplus
 }

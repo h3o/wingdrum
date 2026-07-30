@@ -292,6 +292,7 @@ extern "C" void app_main(void)
 			current_patch_index = patch_metal_ptr;
 			printf("main(): starting \"metal\" patch #%d: sample = %d, tuning = %f, notes = [ ", patch_metal_ptr, samples_metal[patch_metal_ptr], tuning_coeffs[samples_metal[patch_metal_ptr]]);
 			for(int n=0;n<9;n++) { printf("%d ", notes_metal[patch_metal_ptr][n]); } printf("]\n");
+			serial_evt_patch();
 			//patch scales are arranged in one array, starting with wood, then metal. here the patch number = patches_found_wood + patch_metal_ptr
 			sample_drum(samples_metal[patch_metal_ptr], tuning_coeffs[samples_metal[patch_metal_ptr]] * tuning_global_multiplier, notes_metal[patch_metal_ptr], patches_found_wood + patch_metal_ptr);
 		}
@@ -306,6 +307,7 @@ extern "C" void app_main(void)
 			current_patch_index = patch_wood_ptr;
 			printf("main(): starting \"wood\" patch #%d: sample = %d, tuning = %f, notes = [ ", patch_wood_ptr, samples_wood[patch_wood_ptr], tuning_coeffs[samples_wood[patch_wood_ptr]]);
 			for(int n=0;n<9;n++) { printf("%d ", notes_wood[patch_wood_ptr][n]); } printf("]\n");
+			serial_evt_patch();
 			//patch number = patch_wood_ptr
 			sample_drum(samples_wood[patch_wood_ptr], tuning_coeffs[samples_wood[patch_wood_ptr]] * tuning_global_multiplier, notes_wood[patch_wood_ptr], patch_wood_ptr);
 		}
@@ -315,6 +317,7 @@ extern "C" void app_main(void)
 			current_patch_type  = EVENT_NEXT_CHANNEL_BOTH;
 			current_patch_index = 0;
 			printf("main(): starting \"reverb\" patch\n");
+			serial_evt_patch();
 			channel_reverb();
 		}
 
