@@ -275,6 +275,60 @@ static void cmd_get_pad_tuning(const char *arg)
     printf("OK:%.2f\n", cents);
 }
 
+/* GET_PAD_TUNING_ALL — all 9 pads' cent offsets in one response, in pad
+   order. Same values as 9x GET_PAD_TUNING, batched to avoid the per-command
+   round-trip cost when a host wants the whole slot. */
+static void cmd_get_pad_tuning_all(void)
+{
+    printf("OK:");
+    for (int n = 0; n < NOTES_PER_SCALE; n++) {
+        float cents = log2f(micro_tuning_selected[n]) * 1200.0f;
+        printf("%.2f%s", cents, n < NOTES_PER_SCALE - 1 ? "," : "");
+    }
+    printf("\n");
+}
+
+/* CLEAR_PAD_TUNING:<slot 0-7>|all
+   <slot> zeroes all 9 pads' micro-tuning for one scale slot of the
+   current patch — targets any slot directly, not just the active one.
+   "all" zeroes every slot of every patch (metal, wood, and the
+   poly-reverb patch): micro-tuning is stored per patch in NVS and only
+   the active patch's data lives in the in-memory micro_tuning buffer at
+   any time, so a host doing a full factory-reset-style wipe would
+   otherwise have to step through SET_SLOT + 9x SET_PAD_TUNING for every
+   slot of every patch itself. */
+static void cmd_clear_pad_tuning(const char *arg)
+{
+    if (strcmp(arg, "all") == 0) {
+        float blank[SCALES_PER_PATCH * NOTES_PER_SCALE];
+        for (int i = 0; i < SCALES_PER_PATCH * NOTES_PER_SCALE; i++)
+            blank[i] = 1.0f;
+
+        int total_patches = patches_found_metal + patches_found_wood + 1; /* +1 = poly-reverb */
+        for (int p = 0; p < total_patches; p++) {
+            if (p == current_patch) {
+                memcpy(micro_tuning, blank, sizeof(blank));
+                store_micro_tuning_if_changed(current_patch, micro_tuning);
+            } else {
+                store_micro_tuning(p, blank);
+            }
+        }
+        printf("OK\n");
+        return;
+    }
+
+    int slot = atoi(arg);
+    if (slot < 0 || slot >= SCALES_PER_PATCH) {
+        printf("ERR:INVALID_SLOT (0-%d)\n", SCALES_PER_PATCH - 1);
+        return;
+    }
+
+    for (int n = 0; n < NOTES_PER_SCALE; n++)
+        micro_tuning[slot * NOTES_PER_SCALE + n] = 1.0f;
+    store_micro_tuning_if_changed(current_patch, micro_tuning);
+    printf("OK\n");
+}
+
 /* SET_SCALE_DEF:<slot>,<scale_name>  — load named scale into a specific slot */
 static void cmd_set_scale_def(const char *arg)
 {
@@ -384,31 +438,29 @@ static void cmd_get_effect(void)
     print_effect_state("OK:");
 }
 
-/* The polyphonic reverb "easter egg" patch (SET_PATCH:reverb) is a
-   separate DSP path with no remotely controllable delay/reverb
-   parameters of its own — echo_dynamic_loop_* and ECHO_MIXING_GAIN_MUL*
-   aren't used there. Reject writes instead of silently accepting a
-   value the hardware won't act on. */
-static int effect_params_available(void)
-{
-    if (current_patch_type == EVENT_NEXT_CHANNEL_BOTH) {
-        printf("ERR:UNAVAILABLE_IN_POLY_REVERB\n");
-        return 0;
-    }
-    return 1;
-}
-
-/* SET_EFFECT:off | delay,<0-7> | short,<0-7> | depth,<0-100>
+/* SET_EFFECT:off | delay,<0-7> | short,<0-7> | depth,<0-100> | tilt
    "delay" and "short" are the same echo/delay effect's two hardware
    preset banks (wood/metal button while in the length menu) — there is
    no separate reverb engine here. "depth" sets the wet/feedback amount
    normally driven by accelerometer tilt (ECHO_MIXING_GAIN_MUL_TARGET);
-   any successful SET_EFFECT suspends that tilt control so the value
-   sticks — e.g. for the drum sitting flat on a desk — until the player
-   changes patch with a physical button press (see ui.c). */
+   any successful SET_EFFECT other than "tilt" suspends that tilt control
+   so the value sticks — e.g. for the drum sitting flat on a desk — until
+   either the player changes patch with a physical button press (see
+   ui.c), or "tilt" hands control back explicitly.
+
+   All of the above also apply while the polyphonic reverb "easter egg"
+   patch (SET_PATCH:reverb) is active: the delay engine mixes into the
+   signal path unconditionally (see signals.c), independent of patch
+   type, and the hardware's own delay-length menu (long-press wood+metal)
+   isn't gated on patch type either — the two effects stack, exactly as
+   they do when triggered by hand. */
 static void cmd_set_effect(const char *arg)
 {
-    if (!effect_params_available()) return;
+    if (strcmp(arg, "tilt") == 0) {
+        serial_effect_override = 0;
+        printf("OK\n");
+        return;
+    }
 
     if (strncmp(arg, "depth", 5) == 0) {
         const char *comma = strchr(arg, ',');
@@ -436,7 +488,7 @@ static void cmd_set_effect(const char *arg)
         if (idx < 0 || idx > 7) { printf("ERR:INVALID_INDEX (short 0-7)\n"); return; }
         step = 9 + idx;
     } else {
-        printf("ERR:USAGE SET_EFFECT:off|delay,<0-7>|short,<0-7>|depth,<0-100>\n");
+        printf("ERR:USAGE SET_EFFECT:off|delay,<0-7>|short,<0-7>|depth,<0-100>|tilt\n");
         return;
     }
 
@@ -458,8 +510,6 @@ static void cmd_get_echo_len(void)
    limits fine_adjust_delay_length() enforces. */
 static void cmd_set_echo_len(const char *arg)
 {
-    if (!effect_params_available()) return;
-
     int len = atoi(arg);
 
     if (len == 0) {
@@ -490,6 +540,44 @@ static void cmd_get_effect_depth(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Note triggering                                                       */
+/*                                                                      */
+/* NOTE_ON:<pad 0-8>,<velocity 0-127> / NOTE_OFF:<pad 0-8>              */
+/*                                                                      */
+/* Serial equivalent of touching a pad, routed through the same         */
+/* new_note() the hardware itself uses for real touch input and for its */
+/* own scale-preview (ui.c passes pad=0 for preview notes too — the     */
+/* first argument only feeds per-touchpad calibration bookkeeping,      */
+/* which a software-triggered note shouldn't perturb, so it's fixed at  */
+/* 0 here as well). velocity is scaled x4 to land in new_note()'s       */
+/* internal level range, matching ui.c's own SCALE_PLAY_VELOCITY_DEFAULT */
+/* (500, i.e. velocity ~125) for a preview note played at full strength. */
+/* ------------------------------------------------------------------ */
+
+static void cmd_note_on(const char *arg)
+{
+    int pad, vel;
+    if (sscanf(arg, "%d,%d", &pad, &vel) != 2 ||
+        pad < 0 || pad >= NOTES_PER_SCALE || vel < 0 || vel > 127) {
+        printf("ERR:INVALID (usage: NOTE_ON:<pad 0-8>,<velocity 0-127>)\n");
+        return;
+    }
+    new_note(0, pad, 1, vel * 4);
+    printf("OK\n");
+}
+
+static void cmd_note_off(const char *arg)
+{
+    int pad = atoi(arg);
+    if (pad < 0 || pad >= NOTES_PER_SCALE) {
+        printf("ERR:INVALID_PAD\n");
+        return;
+    }
+    new_note(0, pad, 0, 0);
+    printf("OK\n");
+}
+
+/* ------------------------------------------------------------------ */
 /* Dispatcher                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -512,6 +600,8 @@ static void handle_command(char *line)
     else if (strcmp (line, "GET_TUNING")           == 0) cmd_get_tuning();
     else if (strncmp(line, "SET_PAD_TUNING:",  15) == 0) cmd_set_pad_tuning(line + 15);
     else if (strncmp(line, "GET_PAD_TUNING:",  15) == 0) cmd_get_pad_tuning(line + 15);
+    else if (strcmp (line, "GET_PAD_TUNING_ALL")   == 0) cmd_get_pad_tuning_all();
+    else if (strncmp(line, "CLEAR_PAD_TUNING:", 18) == 0) cmd_clear_pad_tuning(line + 18);
     else if (strncmp(line, "SET_SCALE_DEF:",   14) == 0) cmd_set_scale_def(line + 14);
     else if (strncmp(line, "SET_SCALE_NOTES:", 16) == 0) cmd_set_scale_notes(line + 16);
     else if (strcmp (line, "GET_SLOT")             == 0) cmd_get_slot();
@@ -521,6 +611,8 @@ static void handle_command(char *line)
     else if (strcmp (line, "GET_ECHO_LEN")         == 0) cmd_get_echo_len();
     else if (strncmp(line, "SET_ECHO_LEN:",    13) == 0) cmd_set_echo_len(line + 13);
     else if (strcmp (line, "GET_EFFECT_DEPTH")     == 0) cmd_get_effect_depth();
+    else if (strncmp(line, "NOTE_ON:",           8) == 0) cmd_note_on(line + 8);
+    else if (strncmp(line, "NOTE_OFF:",          9) == 0) cmd_note_off(line + 9);
     else    printf("ERR:UNKNOWN_CMD\n");
 }
 
