@@ -79,6 +79,88 @@ static int parse_scale_text(char *text, int *out)
 }
 
 /* ------------------------------------------------------------------ */
+/* Deferred NVS commit for tuning/scale writes                          */
+/*                                                                      */
+/* SET_PAD_TUNING and SET_SCALE_NOTES apply to the live RAM buffer      */
+/* immediately (audibly effective right away) but coalesce the actual   */
+/* flash commit: a burst of rapid calls (e.g. a DAW-side transpose/      */
+/* octave control firing on every key press) collapses into a single    */
+/* NVS write instead of one per call, cutting both flash wear and the   */
+/* number of commit operations that could be interrupted by a brownout  */
+/* mid-write. The snapshot is copied at mark time (not read live at     */
+/* flush time) so it stays correct even if the active patch changes     */
+/* before the debounce window elapses.                                  */
+/*                                                                      */
+/* Every place that can either reload the current patch's data from NVS */
+/* (which would discard the unflushed RAM change) or cut power (losing  */
+/* it outright) must call serial_cmd_flush_pending_nvs() first — patch  */
+/* switches (serial SET_PATCH, SET_TUNING's reload, physical wood/metal */
+/* buttons) and power-off (button-held and auto/idle timeout).          */
+/* ------------------------------------------------------------------ */
+
+#define NVS_COMMIT_DEBOUNCE_TICKS 50 /* ~1s at the serial task's 20ms poll interval */
+
+static int   tuning_pending = 0;
+static int   tuning_pending_patch = -1;
+static float tuning_pending_snapshot[SCALES_PER_PATCH * NOTES_PER_SCALE];
+static int   tuning_quiet_ticks = 0;
+
+static int   scale_pending = 0;
+static int   scale_pending_patch = -1;
+static int   scale_pending_snapshot[SCALES_PER_PATCH * NOTES_PER_SCALE];
+static int   scale_quiet_ticks = 0;
+
+static void mark_tuning_pending(void)
+{
+    memcpy(tuning_pending_snapshot, micro_tuning, sizeof(tuning_pending_snapshot));
+    tuning_pending_patch = current_patch;
+    tuning_pending       = 1;
+    tuning_quiet_ticks   = 0;
+}
+
+static void mark_scale_pending(void)
+{
+    memcpy(scale_pending_snapshot, patch_notes, sizeof(scale_pending_snapshot));
+    scale_pending_patch = current_patch;
+    scale_pending        = 1;
+    scale_quiet_ticks    = 0;
+}
+
+/* Cancel a queued debounced write for the current patch because a fresher
+   synchronous write (e.g. CLEAR_PAD_TUNING, SET_SCALE) just committed the
+   live buffer directly — without this, the stale queued snapshot would
+   otherwise flush later and clobber the write that was just made. */
+static void cancel_tuning_pending(void) { tuning_pending = 0; }
+static void cancel_scale_pending(void)  { scale_pending  = 0; }
+
+void serial_cmd_flush_pending_nvs(void)
+{
+    if (tuning_pending) {
+        store_micro_tuning_if_changed(tuning_pending_patch, tuning_pending_snapshot);
+        tuning_pending = 0;
+    }
+    if (scale_pending) {
+        store_patch_scales_if_changed(scale_pending_patch, scale_pending_snapshot);
+        scale_pending = 0;
+    }
+}
+
+/* Called once per serial task poll iteration (~every 20ms, see
+   serial_command_task). Commits a pending write once its debounce window
+   has passed with no further changes to the same buffer. */
+static void serial_cmd_nvs_debounce_tick(void)
+{
+    if (tuning_pending && ++tuning_quiet_ticks >= NVS_COMMIT_DEBOUNCE_TICKS) {
+        store_micro_tuning_if_changed(tuning_pending_patch, tuning_pending_snapshot);
+        tuning_pending = 0;
+    }
+    if (scale_pending && ++scale_quiet_ticks >= NVS_COMMIT_DEBOUNCE_TICKS) {
+        store_patch_scales_if_changed(scale_pending_patch, scale_pending_snapshot);
+        scale_pending = 0;
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* Event notifications (EVT:*)                                          */
 /*                                                                      */
 /* Unsolicited lines announcing state changes (typically made on the    */
@@ -161,6 +243,7 @@ static void cmd_set_scale(const char *arg)
     selected_scale[current_patch] = slot;
     change_scale();
     store_patch_scales_if_changed(current_patch, patch_notes);
+    cancel_scale_pending();
     printf("OK\n");
 }
 
@@ -210,6 +293,7 @@ static void cmd_set_patch(const char *arg)
         return;
     }
 
+    serial_cmd_flush_pending_nvs(); /* about to reload from NVS for the new patch */
     serial_patch_request_type  = req_type;
     serial_patch_request_index = index;
     event_next_channel         = req_type; /* wake DSP inner loop */
@@ -236,6 +320,7 @@ static void cmd_set_tuning(const char *arg)
     tuning_global_multiplier = hz / 440.0f;
 
     /* Trigger reload of current patch so multiplier takes effect immediately */
+    serial_cmd_flush_pending_nvs(); /* the reload below re-reads from NVS */
     serial_patch_request_type  = current_patch_type;
     serial_patch_request_index = current_patch_index;
     event_next_channel         = current_patch_type;
@@ -260,7 +345,7 @@ static void cmd_set_pad_tuning(const char *arg)
     micro_tuning_selected[pad] = mult;
     /* Mirror into the backing array so NVS persist and reload are consistent */
     micro_tuning[selected_scale[current_patch] * NOTES_PER_SCALE + pad] = mult;
-    store_micro_tuning_if_changed(current_patch, micro_tuning);
+    mark_tuning_pending(); /* audible immediately; flash commit debounced, see above */
     printf("OK\n");
 }
 
@@ -309,6 +394,7 @@ static void cmd_clear_pad_tuning(const char *arg)
             if (p == current_patch) {
                 memcpy(micro_tuning, blank, sizeof(blank));
                 store_micro_tuning_if_changed(current_patch, micro_tuning);
+                cancel_tuning_pending();
             } else {
                 store_micro_tuning(p, blank);
             }
@@ -326,6 +412,7 @@ static void cmd_clear_pad_tuning(const char *arg)
     for (int n = 0; n < NOTES_PER_SCALE; n++)
         micro_tuning[slot * NOTES_PER_SCALE + n] = 1.0f;
     store_micro_tuning_if_changed(current_patch, micro_tuning);
+    cancel_tuning_pending();
     printf("OK\n");
 }
 
@@ -364,6 +451,7 @@ static void cmd_set_scale_def(const char *arg)
         patch_notes[slot * NOTES_PER_SCALE + n] = tmp[n];
 
     store_patch_scales_if_changed(current_patch, patch_notes);
+    cancel_scale_pending();
     printf("OK\n");
 }
 
@@ -396,7 +484,7 @@ static void cmd_set_scale_notes(const char *arg)
     for (int n = 0; n < NOTES_PER_SCALE; n++)
         patch_notes[slot * NOTES_PER_SCALE + n] = notes[n];
 
-    store_patch_scales_if_changed(current_patch, patch_notes);
+    mark_scale_pending(); /* audible immediately; flash commit debounced, see above */
     printf("OK\n");
 }
 
@@ -601,7 +689,7 @@ static void handle_command(char *line)
     else if (strncmp(line, "SET_PAD_TUNING:",  15) == 0) cmd_set_pad_tuning(line + 15);
     else if (strncmp(line, "GET_PAD_TUNING:",  15) == 0) cmd_get_pad_tuning(line + 15);
     else if (strcmp (line, "GET_PAD_TUNING_ALL")   == 0) cmd_get_pad_tuning_all();
-    else if (strncmp(line, "CLEAR_PAD_TUNING:", 18) == 0) cmd_clear_pad_tuning(line + 18);
+    else if (strncmp(line, "CLEAR_PAD_TUNING:", 17) == 0) cmd_clear_pad_tuning(line + 17);
     else if (strncmp(line, "SET_SCALE_DEF:",   14) == 0) cmd_set_scale_def(line + 14);
     else if (strncmp(line, "SET_SCALE_NOTES:", 16) == 0) cmd_set_scale_notes(line + 16);
     else if (strcmp (line, "GET_SLOT")             == 0) cmd_get_slot();
@@ -657,5 +745,6 @@ void serial_command_task(void *pvParameters)
                 line[pos++] = (char)ch;
             }
         }
+        serial_cmd_nvs_debounce_tick();
     }
 }

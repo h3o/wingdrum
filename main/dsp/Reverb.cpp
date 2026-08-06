@@ -22,6 +22,7 @@
 #include <hw/gpio.h>
 #include <hw/midi.h>
 #include <hw/init.h>
+#include <hw/serial_cmd.h>
 #include <string.h>
 #include <math.h>
 
@@ -77,9 +78,17 @@ void decaying_reverb(int extended_buffers)
 	memset(echo_buffer,0,ECHO_BUFFER_LENGTH*sizeof(int16_t)); //clear the entire buffer
 	echo_buffer_ptr0 = 0; //reset pointer
 	*/
-	echo_dynamic_loop_length = ECHO_BUFFER_LENGTH_DEFAULT;
-    ECHO_MIXING_GAIN_MUL = 3; //amount of signal to feed back to echo loop, expressed as a fragment
-    ECHO_MIXING_GAIN_DIV = 4; //e.g. if MUL=2 and DIV=3, it means 2/3 of signal is mixed in
+	/* Only apply reverb's own delay defaults if nothing has been set over
+	   serial (SET_EFFECT/SET_ECHO_LEN) — otherwise a serial-configured
+	   delay length/depth gets silently overwritten on every entry into
+	   this patch, including re-entries that aren't the player's first
+	   visit since power-on. */
+	if(!serial_effect_override)
+	{
+		echo_dynamic_loop_length = ECHO_BUFFER_LENGTH_DEFAULT;
+		ECHO_MIXING_GAIN_MUL = 3; //amount of signal to feed back to echo loop, expressed as a fragment
+		ECHO_MIXING_GAIN_DIV = 4; //e.g. if MUL=2 and DIV=3, it means 2/3 of signal is mixed in
+	}
 
 	#ifdef SWITCH_I2C_SPEED_MODES
 	i2c_master_deinit();

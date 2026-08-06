@@ -536,6 +536,7 @@ void process_ui_events(void *pvParameters)
 
 		if (long_press_button_pwr_scale)
 		{
+			serial_cmd_flush_pending_nvs(); /* about to power off or resume via an NVS reload */
 			event_next_channel = EVENT_NEXT_CHANNEL_PWR_OFF;
 			long_press_button_pwr_scale = 0;
 		}
@@ -652,6 +653,7 @@ void process_ui_events(void *pvParameters)
 		{
 			if(!delay_settings && !scale_settings)
 			{
+				serial_cmd_flush_pending_nvs(); /* about to reload from NVS for the new patch */
 				event_next_channel = EVENT_NEXT_CHANNEL_WOOD;
 				serial_effect_override = 0; /* player grabbed the drum to switch patch directly */
 			}
@@ -667,6 +669,7 @@ void process_ui_events(void *pvParameters)
 		{
 			if(!delay_settings && !scale_settings)
 			{
+				serial_cmd_flush_pending_nvs(); /* about to reload from NVS for the new patch */
 				event_next_channel = EVENT_NEXT_CHANNEL_METAL;
 				serial_effect_override = 0; /* player grabbed the drum to switch patch directly */
 			}
@@ -693,6 +696,7 @@ void process_ui_events(void *pvParameters)
 			}
 			if(!delay_settings && !scale_settings)
 			{
+				serial_cmd_flush_pending_nvs(); /* about to reload from NVS for the new patch */
 				event_next_channel = EVENT_NEXT_CHANNEL_BOTH;
 				serial_effect_override = 0; /* player grabbed the drum to switch patch directly */
 			}
@@ -755,6 +759,7 @@ void check_auto_power_off(int extend_timeout)
 		if(!power_off_animation(1, LED_PWR_OFF_DELAY))
 		{
 			printf("check_auto_power_off(): shutting down!\n");
+			serial_cmd_flush_pending_nvs(); /* last chance before power is cut */
 			drum_shutdown();
 		}
 		else

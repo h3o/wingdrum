@@ -54,6 +54,14 @@ void serial_evt_slot(void);
 void serial_evt_effect(void);
 void serial_evt_patch(void);
 
+/* Commits any tuning/scale NVS write that SET_PAD_TUNING/SET_SCALE_NOTES
+   deferred (see serial_cmd.c). Must be called from task context (never an
+   ISR — it can call into NVS/flash) before anything that would either
+   reload the current patch's data from NVS (discarding the unflushed RAM
+   change) or cut power (losing it outright): patch switches (serial or
+   physical button), SET_TUNING's reload, and any power-off path. */
+void serial_cmd_flush_pending_nvs(void);
+
 #ifdef __cplusplus
 }
 #endif
