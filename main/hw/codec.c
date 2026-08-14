@@ -58,7 +58,8 @@ const int8_t AGC_levels[AGC_LEVELS] = {0, -5, -8, -10, -12, -14, -17, -20, -24};
 const uint8_t AGC_levels_indication[AGC_LEVELS] = {0x00,0x10,0x80,0x01,0x03,0x09,0x41,0x02,0x0a};
 //uint8_t AGC_levels_ptr;
 
-#define CODEC_PLL_44K
+//CODEC_PLL_44K is gone: the codec clock is now selected by CODEC_CLOCK_MODE
+//inside codec_init(), see the "CODEC CLOCK CONFIG" block there.
 
 #define ADC_HP_FILTER
 
@@ -304,10 +305,40 @@ static esp_err_t i2c_codec_ctrl_init(i2c_port_t set_i2c_num, int8_t enable_AGC, 
 
     //vTaskDelay(30 / portTICK_RATE_MS);
 
-    //------------------- PLL CONFIG ---------------------------------------
+    //------------------- CODEC CLOCK CONFIG -------------------------------
+    //
+    //The AIC3104 needs CODEC_CLKIN = 128 * fsref. ESP-IDF v4.4 drives the I2S
+    //master clock at sample_rate * I2S_MCLK_MULTIPLE_256 (see
+    //i2s_calculate_common_clock() in components/driver/i2s.c), so with
+    //I2S_AUDIOFREQ = 48000 the MCLK on GPIO0 is 12.288 MHz and BCLK is
+    //48000 * 2ch * 16bit = 1.536 MHz.
+    //
+    //CODEC_CLOCK_MODE_DIRECT (default)
+    //  PLL bypassed. CODEC_CLKIN = CLKDIV_OUT = MCLK / Q, and
+    //  fsref = MCLK / (128 * Q) = 12288000 / (128 * 2) = 48000 Hz exactly.
+    //  Lowest jitter available: no PLL in the path at all, just a divide by 2
+    //  of a clock the APLL already places within a few ppm of nominal.
+    //
+    //CODEC_CLOCK_MODE_PLL_MCLK
+    //  PLL enabled and referenced to MCLK (not BCLK):
+    //  fsref = (PLLCLK_IN * K * R) / (2048 * P)
+    //        = (12288000 * 8 * 1) / (2048 * 1) = 48000 Hz
+    //  VCO = PLLCLK_IN * K * R / P = 98.304 MHz, inside the 80..110 MHz range
+    //  the datasheet requires. PLLCLK_IN/P = 12.288 MHz is in the 10..20 MHz
+    //  band, so R must be 1.
+    //
+    //CODEC_CLOCK_MODE_LEGACY
+    //  Exactly what shipped in v1.0, kept for A/B comparison. PLL referenced
+    //  to BCLK with J=32 gives fsref = 1536000 * 32 / 2048 = 24 kHz (half the
+    //  actual frame rate) and a VCO of only 49.152 MHz, i.e. well below the
+    //  datasheet minimum of 80 MHz. Out-of-spec VCO operation is expected to
+    //  vary from part to part.
 
-    //Page 0/Register 101: Clock Register
-    //D0: CODEC_CLKIN Source Selection => 0: CODEC_CLKIN uses PLLDIV_OUT (default)
+    #define CODEC_CLOCK_MODE_DIRECT		0
+    #define CODEC_CLOCK_MODE_PLL_MCLK	1
+    #define CODEC_CLOCK_MODE_LEGACY		2
+
+    #define CODEC_CLOCK_MODE	CODEC_CLOCK_MODE_DIRECT
 
     //Page 0/Register 102: Clock Generation Control Register
     //D7-D6: CLKDIV_IN Source Selection
@@ -319,8 +350,11 @@ static esp_err_t i2c_codec_ctrl_init(i2c_port_t set_i2c_num, int8_t enable_AGC, 
     //01: PLLCLK_IN uses GPIO2.
     //10: PLLCLK_IN uses BCLK
     //D3-D0: R/W 0010 Reserved. Write only 0010 to these bits.
+	#if CODEC_CLOCK_MODE == CODEC_CLOCK_MODE_LEGACY
     ret = i2c_codec_two_byte_command(0x66, 0x22); //00100010 ->CLKDIV_IN:MCLK,PLLCLK_IN:BCLK
-    //ret = i2c_codec_two_byte_command(0x66, 0x02); //00000010 ->CLKDIV_IN:MCLK,PLLCLK_IN:MCLK
+	#else
+    ret = i2c_codec_two_byte_command(0x66, 0x02); //00000010 ->CLKDIV_IN:MCLK,PLLCLK_IN:MCLK
+	#endif
     if (ret != ESP_OK) { return ret; }
 
     //Page 0/Register 3: PLL Programming Register A
@@ -329,35 +363,69 @@ static esp_err_t i2c_codec_ctrl_init(i2c_port_t set_i2c_num, int8_t enable_AGC, 
     //1: PLL is enabled
     //D6..D3: PLL Q Value => 0010: Q = 2 (default)
     //D2-D0: PLL P Value => 001: P = 1
-    ret = i2c_codec_two_byte_command(0x03, 0x91); //10010001
+	#if CODEC_CLOCK_MODE == CODEC_CLOCK_MODE_DIRECT
+    ret = i2c_codec_two_byte_command(0x03, 0x11); //00010001 -> PLL off, Q = 2, P = 1
+	#else
+    ret = i2c_codec_two_byte_command(0x03, 0x91); //10010001 -> PLL on,  Q = 2, P = 1
+	#endif
     if (ret != ESP_OK) { return ret; }
+
+	#if CODEC_CLOCK_MODE != CODEC_CLOCK_MODE_DIRECT
 
     //Page 0/Register 4: PLL Programming Register B
-    //D7..D2: PLL J Value => 100000: J = 32, 110000: J = 48,
+    //D7..D2: PLL J Value => 001000: J = 8, 100000: J = 32, 110000: J = 48
     //D1-D0: R/W 00 Reserved. Write only zeros to these bits.
-
-	#ifdef CODEC_PLL_44K
-    ret = i2c_codec_two_byte_command(0x04, 0x80); //10000000
+	#if CODEC_CLOCK_MODE == CODEC_CLOCK_MODE_PLL_MCLK
+    ret = i2c_codec_two_byte_command(0x04, 0x20); //00100000 -> J = 8, for fsref = 48kHz from a 12.288MHz MCLK
 	#else
-    ret = i2c_codec_two_byte_command(0x04, 0xa0); //11000000 -> should be correct for 48k but does not sound well
+    ret = i2c_codec_two_byte_command(0x04, 0x80); //10000000 -> J = 32
 	#endif
-
     if (ret != ESP_OK) { return ret; }
 
-    //Page 0/Register 5: PLL Programming Register C
-    //Page 0/Register 6: PLL Programming Register D
-    //all 0 => D = 0 (default)
+    //Page 0/Register 5: PLL Programming Register C (D value, bits 13..6)
+    //Page 0/Register 6: PLL Programming Register D (D value, bits 5..0)
+    //D = 0, so K = J exactly. Written explicitly rather than relying on reset state.
+    ret = i2c_codec_two_byte_command(0x05, 0x00);
+    if (ret != ESP_OK) { return ret; }
+    ret = i2c_codec_two_byte_command(0x06, 0x00);
+    if (ret != ESP_OK) { return ret; }
 
     //Page 0/Register 11: Audio Codec Overflow Flag Register
-    //D3-D0: PLL R Value => 0001: R = 1 (default)
+    //D3-D0: PLL R Value => 0001: R = 1
+    ret = i2c_codec_two_byte_command(0x0b, 0x01);
+    if (ret != ESP_OK) { return ret; }
 
-	//------------------- PLL CONFIG (end) ---------------------------------
+	#endif //CODEC_CLOCK_MODE != CODEC_CLOCK_MODE_DIRECT
+
+    //Page 0/Register 101: Clock Register
+    //D0: CODEC_CLKIN Source Selection
+    //0: CODEC_CLKIN uses PLLDIV_OUT (default)
+    //1: CODEC_CLKIN uses CLKDIV_OUT
+	#if CODEC_CLOCK_MODE == CODEC_CLOCK_MODE_DIRECT
+    ret = i2c_codec_two_byte_command(0x65, 0x01); //CODEC_CLKIN uses CLKDIV_OUT (PLL bypassed)
+	#else
+    ret = i2c_codec_two_byte_command(0x65, 0x00); //CODEC_CLKIN uses PLLDIV_OUT
+	#endif
+    if (ret != ESP_OK) { return ret; }
+
+    //Page 0/Register 2: Codec Sample Rate Select Register
+    //D7-D4: ADC fs = fsref / 1, D3-D0: DAC fs = fsref / 1
+    //This is the reset default, written explicitly so the divider can never be
+    //left over from a previous configuration.
+    ret = i2c_codec_two_byte_command(0x02, 0x00);
+    if (ret != ESP_OK) { return ret; }
+
+	//------------------- CODEC CLOCK CONFIG (end) -------------------------
 
     //Page 0/Register 7: Codec Data-Path Setup Register
-	//D7->1: fS(ref) = 44.1 kHz
+	//D7->0: fS(ref) = 48 kHz, D7->1: fS(ref) = 44.1 kHz
 	//D4-D3->01: Left-DAC data path plays left-channel input data
 	//D2-D1->01: Right-DAC data path plays right-channel input data
-    ret = i2c_codec_two_byte_command(0x07, 0x8a); //10001010
+	#if CODEC_CLOCK_MODE == CODEC_CLOCK_MODE_LEGACY
+    ret = i2c_codec_two_byte_command(0x07, 0x8a); //10001010 -> fsref = 44.1kHz
+	#else
+    ret = i2c_codec_two_byte_command(0x07, 0x0a); //00001010 -> fsref = 48kHz
+	#endif
     if (ret != ESP_OK) { return ret; }
 
     //Page 0/Register 37: DAC Power and Output Driver Control Register

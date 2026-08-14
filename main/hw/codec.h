@@ -27,6 +27,11 @@
 //I (57890) I2S: APLL: Req RATE: 50780, real rate: 50781.250, BITS: 16, CLKM: 1, BCK_M: 8, MCLK: 13000000.000, SCLK: 1625000.000000, diva: 1, divb: 0
 
 #define I2S_AUDIOFREQ 48000	//Dekrispator on STM32F4
+//The log line below is from an old IDF and no longer applies. On ESP-IDF v4.4
+//the driver targets mclk = rate * I2S_MCLK_MULTIPLE_256 and asks the APLL for
+//2 * mclk, so 48000 gives APLL = 24.576111 MHz (+4.5 ppm off 24.576 MHz),
+//MCLK = 12.288 MHz on GPIO0 and BCLK = 1.536 MHz. Check the actual numbers in
+//the boot log: "I2S: APLL expected frequency is ... real frequency is ...".
 //I (1012) I2S: APLL: Req RATE: 48000, real rate: 46549.418, BITS: 16, CLKM: 1, BCK_M: 8, MCLK: 11916651.000, SCLK: 1489581.375000, diva: 1, divb: 0
 
 //#define I2S_AUDIOFREQ 44100		//for some DCO modes
