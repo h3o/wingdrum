@@ -82,10 +82,25 @@ extern "C" void app_main(void)
 	//drum_LED_expander_test();
 
 	int nvs_res = nvs_flash_init();
+	if(nvs_res == ESP_ERR_NVS_NO_FREE_PAGES || nvs_res == ESP_ERR_NVS_NEW_VERSION_FOUND)
+	{
+		/* Partition full (garbage collection ran out of free pages) or left
+		   corrupt by a write/erase that got interrupted mid-collection --
+		   the mechanism a collaborator's flash-dump analysis pointed to for
+		   a few units that came back needing a full firmware reinstall.
+		   Restoring from nvs_bak (the same recovery delete_all_custom_scales()
+		   already uses for the factory-reset menu action, see glo_config.c)
+		   gets the unit booting again instead of bricked; user scales/tuning
+		   are lost but the factory defaults come back instead of nothing. */
+		printf("nvs_flash_init() returned %d, restoring from nvs_bak...\n", nvs_res);
+		nvs_res = backup_restore_nvs_data("nvs_bak", "nvs") ? ESP_FAIL : ESP_OK;
+	}
 	if(nvs_res != ESP_OK)
 	{
 		printf("nvs_flash_init() returned %d\n", nvs_res);
 	}
+
+	serial_cmd_load_persisted_tuning(); /* restores the last SET_TUNING value, see glo_config.c's store_tuning_hz()/load_tuning_hz() */
 
 	drum_init_buttons_GPIO();
 

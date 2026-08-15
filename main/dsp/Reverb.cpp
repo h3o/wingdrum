@@ -23,6 +23,7 @@
 #include <hw/midi.h>
 #include <hw/init.h>
 #include <hw/serial_cmd.h>
+#include <hw/ui.h>
 #include <string.h>
 #include <math.h>
 
@@ -88,6 +89,7 @@ void decaying_reverb(int extended_buffers)
 		echo_dynamic_loop_length = ECHO_BUFFER_LENGTH_DEFAULT;
 		ECHO_MIXING_GAIN_MUL = 3; //amount of signal to feed back to echo loop, expressed as a fragment
 		ECHO_MIXING_GAIN_DIV = 4; //e.g. if MUL=2 and DIV=3, it means 2/3 of signal is mixed in
+		ECHO_MIXING_GAIN_MUL_TARGET = ECHO_MIXING_GAIN_MUL; //avoid an initial ramp glitch before the first tilt reading below sets a real target
 	}
 
 	#ifdef SWITCH_I2C_SPEED_MODES
@@ -781,6 +783,50 @@ void decaying_reverb(int extended_buffers)
 				}
 			}
 			#endif
+		}
+
+		/* Tilt-driven depth/feedback amount, ported from sample_drum()'s
+		   SENSOR_DELAY_* -> ECHO_MIXING_GAIN_MUL_TARGET ladder
+		   (SampleDrum.cpp) -- reverb previously never read tilt at all.
+		   Same serial_effect_override guard as metal/wood, so a
+		   serial-set depth still sticks instead of being overridden. */
+		if (TIMING_EVERY_250_MS == 4999) //4Hz
+		{
+			if(!serial_effect_override)
+			{
+				if(SENSOR_DELAY_ACTIVE && !scale_settings && !delay_settings)
+				{
+					if(SENSOR_DELAY_9)      { ECHO_MIXING_GAIN_MUL_TARGET = 8; }
+					else if(SENSOR_DELAY_8) { ECHO_MIXING_GAIN_MUL_TARGET = 6; }
+					else if(SENSOR_DELAY_7) { ECHO_MIXING_GAIN_MUL_TARGET = 5; }
+					else if(SENSOR_DELAY_6) { ECHO_MIXING_GAIN_MUL_TARGET = 4; }
+					else if(SENSOR_DELAY_5) { ECHO_MIXING_GAIN_MUL_TARGET = 3; }
+					else if(SENSOR_DELAY_4) { ECHO_MIXING_GAIN_MUL_TARGET = 2.5; }
+					else if(SENSOR_DELAY_3) { ECHO_MIXING_GAIN_MUL_TARGET = 2; }
+					else if(SENSOR_DELAY_2) { ECHO_MIXING_GAIN_MUL_TARGET = 1.5; }
+					else                    { ECHO_MIXING_GAIN_MUL_TARGET = 1; }
+				}
+				else if(!delay_settings)
+				{
+					ECHO_MIXING_GAIN_MUL_TARGET = 0;
+				}
+			}
+		}
+
+		#define ECHO_MIXING_GAIN_MUL_STEP	0.01
+
+		if (TIMING_EVERY_1_MS == 19)
+		{
+			if(ECHO_MIXING_GAIN_MUL < ECHO_MIXING_GAIN_MUL_TARGET)
+			{
+				ECHO_MIXING_GAIN_MUL += ECHO_MIXING_GAIN_MUL_STEP;
+				if(ECHO_MIXING_GAIN_MUL > ECHO_MIXING_GAIN_MUL_TARGET) ECHO_MIXING_GAIN_MUL = ECHO_MIXING_GAIN_MUL_TARGET;
+			}
+			if(ECHO_MIXING_GAIN_MUL > ECHO_MIXING_GAIN_MUL_TARGET)
+			{
+				ECHO_MIXING_GAIN_MUL -= ECHO_MIXING_GAIN_MUL_STEP;
+				if(ECHO_MIXING_GAIN_MUL < ECHO_MIXING_GAIN_MUL_TARGET) ECHO_MIXING_GAIN_MUL = ECHO_MIXING_GAIN_MUL_TARGET;
+			}
 		}
 
 		if (TIMING_EVERY_100_MS == 2087) //10Hz

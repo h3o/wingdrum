@@ -1930,6 +1930,66 @@ int nvs_get_flag(const char *key) //returns 0 not only when value is zero but al
 	return val;
 }
 
+/* SET_TUNING's reference-pitch value: changed maybe once a session (not a
+   per-note hot path like SET_PAD_TUNING/SET_SCALE_NOTES), so this commits
+   synchronously -- no debounce needed. No fixed-width NVS type covers a
+   float, so it's stored as a raw blob (same approach store_micro_tuning()
+   already uses for its data), just one value instead of an array. */
+#define TUNING_HZ_NVS_KEY "tuning_hz"
+
+void store_tuning_hz(float hz)
+{
+	esp_err_t res;
+	nvs_handle handle;
+	res = nvs_open("drum_settings", NVS_READWRITE, &handle);
+	if(res!=ESP_OK)
+	{
+		printf("store_tuning_hz(): problem with nvs_open(), error = %d\n", res);
+		return;
+	}
+
+	res = nvs_set_blob(handle, TUNING_HZ_NVS_KEY, &hz, sizeof(hz));
+	if(res!=ESP_OK)
+	{
+		printf("store_tuning_hz(): problem with nvs_set_blob(), error = %d\n", res);
+		nvs_close(handle);
+		return;
+	}
+
+	res = nvs_commit(handle);
+	if(res!=ESP_OK)
+	{
+		printf("store_tuning_hz(): problem with nvs_commit(), error = %d\n", res);
+	}
+
+	nvs_close(handle);
+}
+
+/* Returns default_hz on first boot after this feature shipped (key not
+   found yet) as well as on any other read problem -- both are expected,
+   not error conditions worth failing loudly over. */
+float load_tuning_hz(float default_hz)
+{
+	esp_err_t res;
+	nvs_handle handle;
+	res = nvs_open("drum_settings", NVS_READONLY, &handle);
+	if(res!=ESP_OK)
+	{
+		return default_hz;
+	}
+
+	float hz;
+	size_t length = sizeof(hz);
+	res = nvs_get_blob(handle, TUNING_HZ_NVS_KEY, &hz, &length);
+	nvs_close(handle);
+
+	if(res!=ESP_OK || length!=sizeof(hz))
+	{
+		return default_hz;
+	}
+	return hz;
+}
+
 void store_selftest_pass(int value)
 {
 	nvs_set_flag("unit_tested", value);

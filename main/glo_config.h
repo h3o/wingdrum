@@ -226,6 +226,9 @@ void reset_selftest_pass();
 void nvs_set_text(const char *key, char *text);
 int nvs_get_text(const char *key, char **buffer);
 
+void store_tuning_hz(float hz);
+float load_tuning_hz(float default_hz);
+
 
 #ifdef __cplusplus
 }

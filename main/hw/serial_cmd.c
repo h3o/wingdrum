@@ -44,6 +44,16 @@ int   current_patch_index = 0;
 volatile int serial_cmd_boot_ready = 0;
 int   serial_effect_override = 0;
 
+/* Restores the last SET_TUNING value from NVS (see glo_config.c's
+   store_tuning_hz()/load_tuning_hz()). Must run before anything reads
+   tuning_global_multiplier -- called once from app_main() right after
+   nvs_flash_init(), well before the serial command task itself starts. */
+void serial_cmd_load_persisted_tuning(void)
+{
+    tuning_global_hz         = load_tuning_hz(440.0f);
+    tuning_global_multiplier = tuning_global_hz / 440.0f;
+}
+
 /* Depth as reported/accepted by SET_EFFECT:depth / GET_EFFECT_DEPTH is a
    0-100 percentage of the same range the accelerometer drives via
    ECHO_MIXING_GAIN_MUL_TARGET (see SampleDrum.cpp's SENSOR_DELAY_9 case
@@ -54,6 +64,20 @@ int   serial_effect_override = 0;
 /* ------------------------------------------------------------------ */
 /* Helpers                                                              */
 /* ------------------------------------------------------------------ */
+
+/* Strict decimal-integer parse for a required leading argument. Unlike
+   atoi(), which returns 0 both for a genuine "0" and for an empty/
+   unparseable string, this distinguishes the two so a missing argument
+   can be rejected instead of silently acting on slot/pad 0. (Found via
+   CLEAR_PAD_TUNING: an empty argument after the colon was reaching the
+   handler as slot 0 and clearing it.) Returns 1 and writes *out on
+   success, 0 if arg has no leading integer at all. */
+static int parse_required_int(const char *arg, long *out)
+{
+    char *end;
+    *out = strtol(arg, &end, 10);
+    return end != arg;
+}
 
 /* Parse 9 MIDI note integers out of the raw text line returned by
    get_scale() (format "name: n, n, n, ...").  Returns number of notes
@@ -266,7 +290,12 @@ static void cmd_set_patch(const char *arg)
         int len = (int)(comma - arg);
         if (len >= (int)sizeof(type_str)) len = (int)sizeof(type_str) - 1;
         strncpy(type_str, arg, len);
-        index = atoi(comma + 1);
+        long parsed_index;
+        if (!parse_required_int(comma + 1, &parsed_index)) {
+            printf("ERR:MISSING_ARG (usage: SET_PATCH:<metal|wood>,<index> or SET_PATCH:reverb)\n");
+            return;
+        }
+        index = (int)parsed_index;
     } else {
         strncpy(type_str, arg, sizeof(type_str) - 1);
     }
@@ -318,6 +347,7 @@ static void cmd_set_tuning(const char *arg)
     }
     tuning_global_hz         = hz;
     tuning_global_multiplier = hz / 440.0f;
+    store_tuning_hz(hz); /* changed at most a few times a session; no debounce needed */
 
     /* Trigger reload of current patch so multiplier takes effect immediately */
     serial_cmd_flush_pending_nvs(); /* the reload below re-reads from NVS */
@@ -351,8 +381,8 @@ static void cmd_set_pad_tuning(const char *arg)
 
 static void cmd_get_pad_tuning(const char *arg)
 {
-    int pad = atoi(arg);
-    if (pad < 0 || pad >= NOTES_PER_SCALE) {
+    long pad;
+    if (!parse_required_int(arg, &pad) || pad < 0 || pad >= NOTES_PER_SCALE) {
         printf("ERR:INVALID_PAD\n");
         return;
     }
@@ -403,7 +433,11 @@ static void cmd_clear_pad_tuning(const char *arg)
         return;
     }
 
-    int slot = atoi(arg);
+    long slot;
+    if (!parse_required_int(arg, &slot)) {
+        printf("ERR:MISSING_ARG (usage: CLEAR_PAD_TUNING:<slot 0-%d>|all)\n", SCALES_PER_PATCH - 1);
+        return;
+    }
     if (slot < 0 || slot >= SCALES_PER_PATCH) {
         printf("ERR:INVALID_SLOT (0-%d)\n", SCALES_PER_PATCH - 1);
         return;
@@ -422,7 +456,11 @@ static void cmd_set_scale_def(const char *arg)
     const char *comma = strchr(arg, ',');
     if (!comma) { printf("ERR:USAGE SET_SCALE_DEF:<slot>,<name>\n"); return; }
 
-    int slot = atoi(arg);
+    long slot;
+    if (!parse_required_int(arg, &slot)) {
+        printf("ERR:MISSING_ARG (usage: SET_SCALE_DEF:<slot>,<name>)\n");
+        return;
+    }
     if (slot < 0 || slot >= SCALES_PER_PATCH) {
         printf("ERR:INVALID_SLOT (0-%d)\n", SCALES_PER_PATCH - 1);
         return;
@@ -458,11 +496,14 @@ static void cmd_set_scale_def(const char *arg)
 /* SET_SCALE_NOTES:<slot>,<n0>,<n1>,...,<n8>  — write raw MIDI notes into a slot */
 static void cmd_set_scale_notes(const char *arg)
 {
-    int slot;
+    long slot;
     int notes[NOTES_PER_SCALE];
     const char *p = arg;
 
-    slot = atoi(p);
+    if (!parse_required_int(p, &slot)) {
+        printf("ERR:MISSING_ARG (usage: SET_SCALE_NOTES:<slot>,<n0>,...,<n8>)\n");
+        return;
+    }
     if (slot < 0 || slot >= SCALES_PER_PATCH) {
         printf("ERR:INVALID_SLOT (0-%d)\n", SCALES_PER_PATCH - 1);
         return;
@@ -499,7 +540,11 @@ static void cmd_get_slot(void)
 
 static void cmd_set_slot(const char *arg)
 {
-    int slot = atoi(arg);
+    long slot;
+    if (!parse_required_int(arg, &slot)) {
+        printf("ERR:MISSING_ARG (usage: SET_SLOT:<slot 0-%d>)\n", SCALES_PER_PATCH - 1);
+        return;
+    }
     if (slot < 0 || slot >= SCALES_PER_PATCH) {
         printf("ERR:INVALID_SLOT (0-%d)\n", SCALES_PER_PATCH - 1);
         return;
@@ -508,7 +553,7 @@ static void cmd_set_slot(const char *arg)
     previous_scale = selected_scale[current_patch];
     selected_scale[current_patch] = slot;
     change_scale();
-    printf("OK:%d\n", slot);
+    printf("OK:%ld\n", slot);
 }
 
 /* ------------------------------------------------------------------ */
@@ -656,8 +701,8 @@ static void cmd_note_on(const char *arg)
 
 static void cmd_note_off(const char *arg)
 {
-    int pad = atoi(arg);
-    if (pad < 0 || pad >= NOTES_PER_SCALE) {
+    long pad;
+    if (!parse_required_int(arg, &pad) || pad < 0 || pad >= NOTES_PER_SCALE) {
         printf("ERR:INVALID_PAD\n");
         return;
     }

@@ -17,7 +17,9 @@ extern "C" {
 #endif
 
 /* Tuning reference multiplier applied at sample_drum() call time.
-   1.0 = 440 Hz reference.  Set via SET_TUNING command. */
+   1.0 = 440 Hz reference.  Set via SET_TUNING command; persists across a
+   power cycle (see store_tuning_hz()/load_tuning_hz() in glo_config.c and
+   serial_cmd_load_persisted_tuning() below). */
 extern float tuning_global_multiplier;
 extern float tuning_global_hz;
 
@@ -61,6 +63,11 @@ void serial_evt_patch(void);
    change) or cut power (losing it outright): patch switches (serial or
    physical button), SET_TUNING's reload, and any power-off path. */
 void serial_cmd_flush_pending_nvs(void);
+
+/* Restores the last SET_TUNING value from NVS. Call once from app_main()
+   right after nvs_flash_init(), before anything reads
+   tuning_global_multiplier (see serial_cmd.c). */
+void serial_cmd_load_persisted_tuning(void);
 
 #ifdef __cplusplus
 }

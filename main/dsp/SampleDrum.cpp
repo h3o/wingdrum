@@ -567,11 +567,20 @@ IRAM_ATTR void sample_drum(int sample, float tuning, int *notes, int patch_numbe
 
 	//echo_dynamic_loop_length = ECHO_BUFFER_LENGTH_DEFAULT;
 
-    ECHO_MIXING_GAIN_MUL = 0;//3;//1;//9; //amount of signal to feed back to echo loop, expressed as a fragment
-    ECHO_MIXING_GAIN_DIV = 10;//4;//8;//10; //e.g. if MUL=2 and DIV=3, it means 2/3 of signal is mixed in
-
 	#define ECHO_MIXING_GAIN_MUL_STEP	0.01
-    ECHO_MIXING_GAIN_MUL_TARGET = ECHO_MIXING_GAIN_MUL;
+
+	/* Only reset to the at-rest depth default if nothing has been set over
+	   serial (SET_EFFECT:depth) -- otherwise every patch entry (including a
+	   serial SET_PATCH switch) silently dropped a remotely-set depth back
+	   to 0, which is what report5.txt described as "the delay drops away -
+	   depth goes back to following tilt". Mirrors the guard already added
+	   to decaying_reverb() in round 3. */
+	if(!serial_effect_override)
+	{
+	    ECHO_MIXING_GAIN_MUL = 0;//3;//1;//9; //amount of signal to feed back to echo loop, expressed as a fragment
+	    ECHO_MIXING_GAIN_DIV = 10;//4;//8;//10; //e.g. if MUL=2 and DIV=3, it means 2/3 of signal is mixed in
+	    ECHO_MIXING_GAIN_MUL_TARGET = ECHO_MIXING_GAIN_MUL;
+	}
 
 	//int bit_crusher_reverb_d = I2S_AUDIOFREQ / 40 + 1;
     //reverb_dynamic_loop_length = bit_crusher_reverb_d;
