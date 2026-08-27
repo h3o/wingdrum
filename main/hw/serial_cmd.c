@@ -79,6 +79,23 @@ static int parse_required_int(const char *arg, long *out)
     return end != arg;
 }
 
+/* Same idea as parse_required_int(), but for SET_EFFECT's "<name>,<value>"
+   shape, whose existing atoi() sites tested only "is there a comma" rather
+   than "is there a value after the comma" -- so a trailing comma with
+   nothing after it (e.g. "delay,") silently landed on index/pct 0 instead
+   of being rejected. Requires both a comma and at least one parsed digit
+   immediately after it. */
+static int parse_after_comma(const char *arg, long *out)
+{
+    const char *comma = strchr(arg, ',');
+    if (!comma || comma[1] == '\0') return 0;
+    char *end;
+    long v = strtol(comma + 1, &end, 10);
+    if (end == comma + 1 || *end != '\0') return 0;
+    *out = v;
+    return 1;
+}
+
 /* Parse 9 MIDI note integers out of the raw text line returned by
    get_scale() (format "name: n, n, n, ...").  Returns number of notes
    written into out[].  out[] must have room for NOTES_PER_SCALE ints. */
@@ -596,13 +613,23 @@ static void cmd_set_effect(const char *arg)
     }
 
     if (strncmp(arg, "depth", 5) == 0) {
-        const char *comma = strchr(arg, ',');
-        int pct = comma ? atoi(comma + 1) : -1;
+        long pct;
+        if (!parse_after_comma(arg, &pct)) {
+            printf("ERR:MISSING_ARG (usage: SET_EFFECT:depth,<0-100>)\n");
+            return;
+        }
         if (pct < 0 || pct > 100) { printf("ERR:INVALID_DEPTH (0-100)\n"); return; }
 
         ECHO_MIXING_GAIN_MUL_TARGET = (float)pct / 100.0f * ECHO_DEPTH_GAIN_MAX;
+        /* Define the ratio at the source: DIV varies by which context (metal/
+           wood vs. poly-reverb) was active before this override took hold, so
+           a depth set here must own DIV too or "depth,70" means a different
+           feedback ratio depending on where it was called from -- and can
+           self-oscillate in the reverb context (DIV=4 there vs. 10 for
+           metal/wood). See round-5 addendum, Option B. */
+        ECHO_MIXING_GAIN_DIV = 10;
         serial_effect_override = 1;
-        printf("OK:%d\n", pct);
+        printf("OK:%ld\n", pct);
         return;
     }
 
@@ -611,15 +638,21 @@ static void cmd_set_effect(const char *arg)
     if (strcmp(arg, "off") == 0) {
         step = 8;  /* echo_dynamic_loop_steps[8] == 0 == effect off */
     } else if (strncmp(arg, "delay", 5) == 0) {
-        const char *comma = strchr(arg, ',');
-        int idx = comma ? atoi(comma + 1) : 0;
+        long idx;
+        if (!parse_after_comma(arg, &idx)) {
+            printf("ERR:MISSING_ARG (usage: SET_EFFECT:delay,<0-7>)\n");
+            return;
+        }
         if (idx < 0 || idx > 7) { printf("ERR:INVALID_INDEX (delay 0-7)\n"); return; }
-        step = idx;
+        step = (int)idx;
     } else if (strncmp(arg, "short", 5) == 0) {
-        const char *comma = strchr(arg, ',');
-        int idx = comma ? atoi(comma + 1) : 0;
+        long idx;
+        if (!parse_after_comma(arg, &idx)) {
+            printf("ERR:MISSING_ARG (usage: SET_EFFECT:short,<0-7>)\n");
+            return;
+        }
         if (idx < 0 || idx > 7) { printf("ERR:INVALID_INDEX (short 0-7)\n"); return; }
-        step = 9 + idx;
+        step = 9 + (int)idx;
     } else {
         printf("ERR:USAGE SET_EFFECT:off|delay,<0-7>|short,<0-7>|depth,<0-100>|tilt\n");
         return;
@@ -628,6 +661,11 @@ static void cmd_set_effect(const char *arg)
     echo_dynamic_loop_current_step = step;
     echo_dynamic_loop_length       = echo_dynamic_loop_steps[step];
     persistent_settings_store_delay(step); /* = confirming with the power button */
+    /* Same reasoning as the depth branch above: delay/short can enable the
+       override on its own without ever touching depth's code path, so DIV
+       has to be set here too or it's left at whatever the previous patch
+       context happened to leave behind. */
+    ECHO_MIXING_GAIN_DIV = 10;
     serial_effect_override = 1;
     printf("OK\n");
 }
@@ -643,12 +681,22 @@ static void cmd_get_echo_len(void)
    limits fine_adjust_delay_length() enforces. */
 static void cmd_set_echo_len(const char *arg)
 {
-    int len = atoi(arg);
+    /* 0 is a legitimate value here ("off"), so atoi()'s inability to tell
+       "no argument" from "argument is zero" would silently switch the
+       effect off on a missing arg -- same failure shape as the original
+       CLEAR_PAD_TUNING bug, but strtol's end-pointer check alone isn't
+       enough to fix it since a genuine 0 must still be accepted. */
+    long len;
+    if (!parse_required_int(arg, &len)) {
+        printf("ERR:MISSING_ARG (usage: SET_ECHO_LEN:<samples>, 0 = off)\n");
+        return;
+    }
 
     if (len == 0) {
         echo_dynamic_loop_current_step = ECHO_DYNAMIC_LOOP_LENGTH_ECHO_OFF;
         echo_dynamic_loop_length       = 0;
         persistent_settings_store_delay(ECHO_DYNAMIC_LOOP_LENGTH_ECHO_OFF);
+        ECHO_MIXING_GAIN_DIV = 10; /* see cmd_set_effect() -- any branch enabling the override owns DIV */
         serial_effect_override = 1;
         printf("OK:0\n");
         return;
@@ -658,10 +706,11 @@ static void cmd_set_echo_len(const char *arg)
     if (len < ECHO_BUFFER_LENGTH_MIN) len = ECHO_BUFFER_LENGTH_MIN;
 
     echo_dynamic_loop_current_step = -1;    /* custom, as fine_adjust does */
-    echo_dynamic_loop_length       = len;
-    persistent_settings_store_delay(-len);  /* negative = raw length (ui.c convention) */
+    echo_dynamic_loop_length       = (int)len;
+    persistent_settings_store_delay((int)-len);  /* negative = raw length (ui.c convention) */
+    ECHO_MIXING_GAIN_DIV = 10;
     serial_effect_override = 1;
-    printf("OK:%d\n", len);
+    printf("OK:%ld\n", len);
 }
 
 static void cmd_get_effect_depth(void)

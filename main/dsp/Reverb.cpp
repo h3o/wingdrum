@@ -827,6 +827,16 @@ void decaying_reverb(int extended_buffers)
 				ECHO_MIXING_GAIN_MUL -= ECHO_MIXING_GAIN_MUL_STEP;
 				if(ECHO_MIXING_GAIN_MUL < ECHO_MIXING_GAIN_MUL_TARGET) ECHO_MIXING_GAIN_MUL = ECHO_MIXING_GAIN_MUL_TARGET;
 			}
+			/* Safety clamp: MUL/DIV >= 1.0 self-oscillates in the echo mix
+			   (signals.c). Independent of serial_cmd.c owning DIV on every
+			   override-enabling branch -- if some future path ever leaves an
+			   unexpected DIV behind, this turns a runaway into a loud echo
+			   instead. See round-5 addendum, Option C. */
+			if(ECHO_MIXING_GAIN_DIV > 0)
+			{
+				float mul_ceil = 0.9f * ECHO_MIXING_GAIN_DIV;
+				if(ECHO_MIXING_GAIN_MUL > mul_ceil) ECHO_MIXING_GAIN_MUL = mul_ceil;
+			}
 		}
 
 		if (TIMING_EVERY_100_MS == 2087) //10Hz
