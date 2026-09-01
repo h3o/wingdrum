@@ -157,6 +157,19 @@ void decaying_reverb(int extended_buffers)
 
     codec_set_mute(0); //enable the sound
 
+	/* Diagnostic for the round-5 left-channel-latch report: the two i2s
+	   words below are each rebuilt from scratch every sample, so a
+	   sustained run of exact zeros on one side and not the other is only
+	   possible if something upstream is genuinely stuck -- not a normal
+	   quiet passage (which fades, it doesn't hit bit-exact 0 and stay
+	   there). Counts consecutive exact-zero samples on the first-computed
+	   channel and, past ~10ms of that, dumps the state most likely to
+	   explain it once per episode (reset when a nonzero sample returns).
+	   Cheap: two integer compares per sample, a printf only on the rare
+	   latch itself. Remove once the report's bug is confirmed fixed. */
+	int reverb_ch_a_zero_run = 0;
+	int reverb_latch_dumped  = 0;
+
 	while(!event_next_channel)
 	{
 		sampleCounter++;
@@ -371,6 +384,8 @@ void decaying_reverb(int extended_buffers)
 		#endif
 
 
+		int16_t reverb_ch_a = 0, reverb_ch_b = 0;
+
 		//sample32 = (add_echo((int16_t)(sample_mix))) << 16;
 		//sample32 = (add_reverb((int16_t)(sample_mix))) << 16;
 		if(extended_buffers)
@@ -379,15 +394,15 @@ void decaying_reverb(int extended_buffers)
 			//sample32 = (add_echo(add_reverb((int16_t)(sample_mix)) + add_reverb_ext((int16_t)(sample_mix)))) << 16; //does not sound as expected
 			//sample32 = (add_echo(add_reverb_ext_all3((int16_t)(sample_mix)))) << 16;
 			#ifdef REVERB_POLYPHONIC
-			sample32 = (add_reverb_ext_all9(add_echo((int16_t)sample_mix))) << 16;
+			reverb_ch_a = add_reverb_ext_all9(add_echo((int16_t)sample_mix));
 			#else
-			sample32 = (add_reverb_ext_all3(add_echo((int16_t)sample_mix))) << 16;
+			reverb_ch_a = add_reverb_ext_all3(add_echo((int16_t)sample_mix));
 			#endif
 		}
 		#if !defined(REVERB_POLYPHONIC) && !defined(REVERB_OCTAVE_UP_DOWN)
 		else
 		{
-			sample32 = (add_reverb(add_echo((int16_t)(sample_mix)))) << 16;
+			reverb_ch_a = add_reverb(add_echo((int16_t)(sample_mix)));
 			//sample32 = (add_echo(add_reverb((int16_t)(sample_mix)))) << 16;
 			//sample32 = add_reverb((int16_t)(sample_mix)) << 16;
 		}
@@ -410,19 +425,51 @@ void decaying_reverb(int extended_buffers)
 			//sample32 += add_echo(add_reverb((int16_t)(sample_mix)) + add_reverb_ext((int16_t)(sample_mix))); //does not sound as expected
 			//sample32 += add_echo(add_reverb_ext_all3((int16_t)(sample_mix)));
 			#ifdef REVERB_POLYPHONIC
-			sample32 += add_reverb_ext_all9(add_echo((int16_t)sample_mix));
+			reverb_ch_b = add_reverb_ext_all9(add_echo((int16_t)sample_mix));
 			#else
-			sample32 += add_reverb_ext_all3(add_echo((int16_t)sample_mix));
+			reverb_ch_b = add_reverb_ext_all3(add_echo((int16_t)sample_mix));
 			#endif
 		}
 		#if !defined(REVERB_POLYPHONIC) && !defined(REVERB_OCTAVE_UP_DOWN)
 		else
 		{
-			sample32 += add_reverb(add_echo((int16_t)(sample_mix)));
+			reverb_ch_b = add_reverb(add_echo((int16_t)(sample_mix)));
 			//sample32 += add_echo(add_reverb((int16_t)(sample_mix)));
 			//sample32 += add_reverb((int16_t)(sample_mix));
 		}
 		#endif
+
+		/* Combine as two independent 16-bit lanes (bitwise), not a 32-bit
+		   arithmetic sum. The old "(a << 16) + b" corrupts a's lane by
+		   exactly 1 LSB whenever b is negative (the sign-extended bits from
+		   promoting b to int carry into the upper word on addition) --
+		   found while tracing the round-5 left-channel report. Too small
+		   (~1 part in 65536) to be that bug on its own, but genuinely wrong
+		   and free to fix while in here; unrelated to the diagnostic below. */
+		sample32 = ((uint32_t)(uint16_t)reverb_ch_a << 16) | (uint16_t)reverb_ch_b;
+
+		if(reverb_ch_a == 0)
+		{
+			if(++reverb_ch_a_zero_run == 480 && !reverb_latch_dumped) //~10ms of exact silence on the first-computed channel only
+			{
+				reverb_latch_dumped = 1;
+				printf("REVERB_CH_LATCH: ch_a stuck at 0 (ch_b=%d), notes_on=%d, note_updated=%d, MIDI_pitch_base_ptr=%d, "
+				       "MIDI_pitch_base=[%.2f,%.2f,%.2f,%.2f], reverb_dynamic_loop_length_ext=[%d,%d,%d,%d], "
+				       "echo_dynamic_loop_length=%d, ECHO_MIXING_GAIN_MUL/DIV=%.2f/%.2f, serial_effect_override=%d, "
+				       "delay_settings=%d, scale_settings=%d\n",
+				       reverb_ch_b, notes_on, note_updated, MIDI_pitch_base_ptr,
+				       MIDI_pitch_base[0], MIDI_pitch_base[1], MIDI_pitch_base[2], MIDI_pitch_base[3],
+				       reverb_dynamic_loop_length_ext[0], reverb_dynamic_loop_length_ext[1],
+				       reverb_dynamic_loop_length_ext[2], reverb_dynamic_loop_length_ext[3],
+				       echo_dynamic_loop_length, ECHO_MIXING_GAIN_MUL, ECHO_MIXING_GAIN_DIV, serial_effect_override,
+				       delay_settings, scale_settings);
+			}
+		}
+		else
+		{
+			reverb_ch_a_zero_run = 0;
+			reverb_latch_dumped  = 0;
+		}
 
 		//i2s_push_sample(I2S_NUM, (char *)&sample32, portMAX_DELAY);
 		i2s_write(I2S_NUM, (void*)&sample32, 4, &i2s_bytes_rw, portMAX_DELAY);
@@ -598,7 +645,18 @@ void decaying_reverb(int extended_buffers)
 							reverb_dynamic_loop_length_ext[3]);
 						*/
 					}
-					else if(notes_on==4 && note_updated<0)
+					/* notes_on is a plain counter incremented on every note-on with no
+					   upper clamp (see new_note() in hw/init.c) -- on 9 pads it can
+					   exceed 4 whenever notes overlap, which is exactly what the
+					   round-5 report's repro does ("two more pads while previous
+					   notes still ring"). Before this fix, any notes_on outside
+					   1-4 matched none of these branches and silently left
+					   reverb_dynamic_loop_length_ext[] at its previous value for
+					   that tick -- not zero by itself, but a real coverage gap
+					   directly implicated by how the bug was reproduced. Folding
+					   5+ into the same 4-note branch is the simplest fix since the
+					   array only has 4 slots regardless. */
+					else if(notes_on>=4 && note_updated<0)
 					{
 						reverb_dynamic_loop_length_ext[0] = (float)SAMPLE_RATE_DEFAULT / MIDI_note_to_freq_ft(MIDI_pitch_base[0]);
 						reverb_dynamic_loop_length_ext[1] = (float)SAMPLE_RATE_DEFAULT / MIDI_note_to_freq_ft(MIDI_pitch_base[1]);
@@ -620,7 +678,20 @@ void decaying_reverb(int extended_buffers)
 
 					for(int r=0;r<REVERB_BUFFERS_EXT;r++)
 					{
-						//if(reverb_dynamic_loop_length_ext[r]<BIT_CRUSHER_REVERB_MIN_EXT9) { reverb_dynamic_loop_length_ext[r] = BIT_CRUSHER_REVERB_MIN_EXT9; }
+						/* Restored: this was disabled, so nothing stopped one of the
+						   four ext lengths above from truncating toward 0 (integer
+						   division in the branches above, e.g. .../4) if a pitch ever
+						   landed at the low end of MIDI_note_to_freq_ft()'s range.
+						   add_reverb_ext_all9() (signals.c) skips a voice entirely
+						   when its length is 0 -- if that ever happened to all
+						   REVERB_BUFFERS_EXT voices at once, the whole reverb stage
+						   (dry input included, see signals.c's out_sample) returns
+						   exactly 0, matching the round-5 report's "dry + tail + mic
+						   noise all vanish together" observation. Not confirmed as
+						   the specific trigger, but a real gap worth closing either
+						   way -- see REVERB_CH_LATCH diagnostic above for confirming
+						   the actual mechanism on next repro. */
+						if(reverb_dynamic_loop_length_ext[r]<BIT_CRUSHER_REVERB_MIN_EXT9) { reverb_dynamic_loop_length_ext[r] = BIT_CRUSHER_REVERB_MIN_EXT9; }
 						if(reverb_dynamic_loop_length_ext[r]>BIT_CRUSHER_REVERB_MAX_EXT9) { reverb_dynamic_loop_length_ext[r] = BIT_CRUSHER_REVERB_MAX_EXT9; }
 						//reverb_buffer_ptr0_ext[r] = 0;
 						//memset(reverb_buffer_ext[r], 0, reverb_dynamic_loop_length_ext[r] * sizeof(int16_t));
