@@ -169,6 +169,11 @@ void decaying_reverb(int extended_buffers)
 	   latch itself. Remove once the report's bug is confirmed fixed. */
 	int reverb_ch_a_zero_run = 0;
 	int reverb_latch_dumped  = 0;
+	/* Round-6 F3: patch entry reads not-yet-written delay-line content for
+	   ~1600 samples (cold buffers), which trips the 480-sample check as a
+	   false positive. Arm the check only after the first nonzero ch_a
+	   sample -- a real latch, by definition, follows nonzero output. */
+	int reverb_ch_a_armed    = 0;
 
 	while(!event_next_channel)
 	{
@@ -376,10 +381,23 @@ void decaying_reverb(int extended_buffers)
 		*/
 
 		#ifdef LPF_ENABLED
+		/* Both LPFs are advanced to keep their state coherent, but only
+		   sample_lpf[1] (RIGHT ADC, the only channel with a wired mic --
+		   see codec.c MIC2R routing) is fed into the reverb path. Before
+		   the round-6 fix, ch_a's call was fed sample_lpf[0] (LEFT ADC,
+		   unconnected -> converges to ~0), which starved ch_a of input;
+		   whenever the echo feedback (which cross-coupled mic material
+		   through the shared echo_buffer) died -- e.g. tilt drives MUL
+		   toward 0 -- ch_a fell to bit-exact silence and latched. Feeding
+		   both calls with the mic channel eliminates the input starvation;
+		   the small between-call stereo width still comes from the shared
+		   reverb/echo state mutating between the two calls. */
 		sample_lpf[0] = sample_lpf[0] + ADC_LPF_ALPHA * ((float)((int16_t)ADC_sample) - sample_lpf[0]);
-		sample_mix = sample_lpf[0] * SAMPLE_VOLUME_REVERB; //apply volume
+		sample_lpf[1] = sample_lpf[1] + ADC_LPF_ALPHA * ((float)((int16_t)(ADC_sample>>16)) - sample_lpf[1]);
+		sample_mix = sample_lpf[1] * SAMPLE_VOLUME_REVERB; //apply volume (mic channel)
 		#else
-		sample_mix = (float)((int16_t)ADC_sample);
+		//there is only one microphone in wingdrum -- take the RIGHT ADC word
+		sample_mix = (float)((int16_t)(ADC_sample>>16));
 		sample_mix = sample_mix * SAMPLE_VOLUME_REVERB; //apply volume
 		#endif
 
@@ -408,14 +426,9 @@ void decaying_reverb(int extended_buffers)
 		}
 		#endif
 
-		#ifdef LPF_ENABLED
-		sample_lpf[1] = sample_lpf[1] + ADC_LPF_ALPHA * ((float)((int16_t)(ADC_sample>>16)) - sample_lpf[1]);
-		sample_mix = sample_lpf[1] * SAMPLE_VOLUME_REVERB; //apply volume
-		#else
-        //there is only one microphone in wingdrum
-		//sample_mix = (float)((int16_t)(ADC_sample>>16));
-        //sample_mix = sample_mix * SAMPLE_VOLUME_REVERB; //apply volume
-		#endif
+		/* ch_b uses the same mic-channel sample_mix as ch_a (see comment
+		   above). The two separate calls are preserved so loop-advance
+		   rate and any state-based stereo width are unchanged. */
 
         //sample32 += add_echo((int16_t)(sample_mix));
         //sample32 += add_reverb((int16_t)(sample_mix));
@@ -450,7 +463,7 @@ void decaying_reverb(int extended_buffers)
 
 		if(reverb_ch_a == 0)
 		{
-			if(++reverb_ch_a_zero_run == 480 && !reverb_latch_dumped) //~10ms of exact silence on the first-computed channel only
+			if(reverb_ch_a_armed && ++reverb_ch_a_zero_run == 480 && !reverb_latch_dumped) //~10ms of exact silence on the first-computed channel only
 			{
 				reverb_latch_dumped = 1;
 				printf("REVERB_CH_LATCH: ch_a stuck at 0 (ch_b=%d), notes_on=%d, note_updated=%d, MIDI_pitch_base_ptr=%d, "
@@ -469,6 +482,7 @@ void decaying_reverb(int extended_buffers)
 		{
 			reverb_ch_a_zero_run = 0;
 			reverb_latch_dumped  = 0;
+			reverb_ch_a_armed    = 1;
 		}
 
 		//i2s_push_sample(I2S_NUM, (char *)&sample32, portMAX_DELAY);
